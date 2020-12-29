@@ -28,7 +28,7 @@ type UserQuery struct {
 	limit      *int
 	offset     *int
 	order      []OrderFunc
-	unique     []string
+	fields     []string
 	predicates []predicate.User
 	// eager-loading edges.
 	withTeams *TeamQuery
@@ -272,13 +272,17 @@ func (uq *UserQuery) ExistX(ctx context.Context) bool {
 // Clone returns a duplicate of the query builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
 func (uq *UserQuery) Clone() *UserQuery {
+	if uq == nil {
+		return nil
+	}
 	return &UserQuery{
 		config:     uq.config,
 		limit:      uq.limit,
 		offset:     uq.offset,
 		order:      append([]OrderFunc{}, uq.order...),
-		unique:     append([]string{}, uq.unique...),
 		predicates: append([]predicate.User{}, uq.predicates...),
+		withTeams:  uq.withTeams.Clone(),
+		withTasks:  uq.withTasks.Clone(),
 		// clone intermediate query.
 		sql:  uq.sql.Clone(),
 		path: uq.path,
@@ -347,24 +351,25 @@ func (uq *UserQuery) GroupBy(field string, fields ...string) *UserGroupBy {
 //		Scan(ctx, &v)
 //
 func (uq *UserQuery) Select(field string, fields ...string) *UserSelect {
-	selector := &UserSelect{config: uq.config}
-	selector.fields = append([]string{field}, fields...)
-	selector.path = func(ctx context.Context) (prev *sql.Selector, err error) {
-		if err := uq.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		return uq.sqlQuery(), nil
-	}
-	return selector
+	uq.fields = append([]string{field}, fields...)
+	return &UserSelect{UserQuery: uq}
 }
 
 func (uq *UserQuery) prepareQuery(ctx context.Context) error {
+	for _, f := range uq.fields {
+		if !user.ValidColumn(f) {
+			return &ValidationError{Name: f, err: fmt.Errorf("ent: invalid field %q for query", f)}
+		}
+	}
 	if uq.path != nil {
 		prev, err := uq.path(ctx)
 		if err != nil {
 			return err
 		}
 		uq.sql = prev
+	}
+	if user.Policy == nil {
+		return errors.New("ent: uninitialized user.Policy (forgotten import ent/runtime?)")
 	}
 	if err := user.Policy.EvalQuery(ctx, uq); err != nil {
 		return err
@@ -381,19 +386,18 @@ func (uq *UserQuery) sqlAll(ctx context.Context) ([]*User, error) {
 			uq.withTasks != nil,
 		}
 	)
-	_spec.ScanValues = func() []interface{} {
+	_spec.ScanValues = func(columns []string) ([]interface{}, error) {
 		node := &User{config: uq.config}
 		nodes = append(nodes, node)
-		values := node.scanValues()
-		return values
+		return node.scanValues(columns)
 	}
-	_spec.Assign = func(values ...interface{}) error {
+	_spec.Assign = func(columns []string, values []interface{}) error {
 		if len(nodes) == 0 {
 			return fmt.Errorf("ent: Assign called without calling ScanValues")
 		}
 		node := nodes[len(nodes)-1]
 		node.Edges.loadedTypes = loadedTypes
-		return node.assignValues(values...)
+		return node.assignValues(columns, values)
 	}
 	if err := sqlgraph.QueryNodes(ctx, uq.driver, _spec); err != nil {
 		return nil, err
@@ -523,6 +527,9 @@ func (uq *UserQuery) querySpec() *sqlgraph.QuerySpec {
 		},
 		From:   uq.sql,
 		Unique: true,
+	}
+	if fields := uq.fields; len(fields) > 0 {
+		_spec.Node.Columns = fields
 	}
 	if ps := uq.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -824,20 +831,17 @@ func (ugb *UserGroupBy) sqlQuery() *sql.Selector {
 
 // UserSelect is the builder for select fields of User entities.
 type UserSelect struct {
-	config
-	fields []string
+	*UserQuery
 	// intermediate query (i.e. traversal path).
-	sql  *sql.Selector
-	path func(context.Context) (*sql.Selector, error)
+	sql *sql.Selector
 }
 
 // Scan applies the selector query and scan the result into the given value.
 func (us *UserSelect) Scan(ctx context.Context, v interface{}) error {
-	query, err := us.path(ctx)
-	if err != nil {
+	if err := us.prepareQuery(ctx); err != nil {
 		return err
 	}
-	us.sql = query
+	us.sql = us.UserQuery.sqlQuery()
 	return us.sqlScan(ctx, v)
 }
 
@@ -1037,11 +1041,6 @@ func (us *UserSelect) BoolX(ctx context.Context) bool {
 }
 
 func (us *UserSelect) sqlScan(ctx context.Context, v interface{}) error {
-	for _, f := range us.fields {
-		if !user.ValidColumn(f) {
-			return &ValidationError{Name: f, err: fmt.Errorf("invalid field %q for selection", f)}
-		}
-	}
 	rows := &sql.Rows{}
 	query, args := us.sqlQuery().Query()
 	if err := us.driver.Query(ctx, query, args, rows); err != nil {

@@ -20,6 +20,7 @@ import (
 	"github.com/facebook/ent/entc/integration/ent/role"
 	"github.com/facebook/ent/entc/integration/ent/schema"
 	"github.com/facebook/ent/schema/field"
+	"github.com/google/uuid"
 )
 
 // FieldTypeCreate is the builder for creating a FieldType entity.
@@ -547,6 +548,18 @@ func (ftc *FieldTypeCreate) SetNillableRole(r *role.Role) *FieldTypeCreate {
 	return ftc
 }
 
+// SetMAC sets the mac field.
+func (ftc *FieldTypeCreate) SetMAC(s schema.MAC) *FieldTypeCreate {
+	ftc.mutation.SetMAC(s)
+	return ftc
+}
+
+// SetUUID sets the uuid field.
+func (ftc *FieldTypeCreate) SetUUID(u uuid.UUID) *FieldTypeCreate {
+	ftc.mutation.SetUUID(u)
+	return ftc
+}
+
 // Mutation returns the FieldTypeMutation object of the builder.
 func (ftc *FieldTypeCreate) Mutation() *FieldTypeMutation {
 	return ftc.mutation
@@ -648,6 +661,11 @@ func (ftc *FieldTypeCreate) check() error {
 	if v, ok := ftc.mutation.Role(); ok {
 		if err := fieldtype.RoleValidator(v); err != nil {
 			return &ValidationError{Name: "role", err: fmt.Errorf("ent: validator failed for field \"role\": %w", err)}
+		}
+	}
+	if v, ok := ftc.mutation.MAC(); ok {
+		if err := fieldtype.MACValidator(v.String()); err != nil {
+			return &ValidationError{Name: "mac", err: fmt.Errorf("ent: validator failed for field \"mac\": %w", err)}
 		}
 	}
 	return nil
@@ -1036,6 +1054,22 @@ func (ftc *FieldTypeCreate) createSpec() (*FieldType, *sqlgraph.CreateSpec) {
 			Column: fieldtype.FieldRole,
 		})
 		_node.Role = value
+	}
+	if value, ok := ftc.mutation.MAC(); ok {
+		_spec.Fields = append(_spec.Fields, &sqlgraph.FieldSpec{
+			Type:   field.TypeString,
+			Value:  value,
+			Column: fieldtype.FieldMAC,
+		})
+		_node.MAC = value
+	}
+	if value, ok := ftc.mutation.UUID(); ok {
+		_spec.Fields = append(_spec.Fields, &sqlgraph.FieldSpec{
+			Type:   field.TypeUUID,
+			Value:  value,
+			Column: fieldtype.FieldUUID,
+		})
+		_node.UUID = value
 	}
 	return _node, _spec
 }

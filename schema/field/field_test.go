@@ -80,8 +80,10 @@ func TestInt(t *testing.T) {
 	assert.True(t, fd.Info.Nillable)
 	assert.True(t, fd.Info.ValueScanner())
 
+	fd = field.Int("count").GoType(sql.NullInt64{}).Descriptor()
+	assert.EqualError(t, fd.Err(), `GoType must be a "int" type or ValueScanner. Use *sql.NullInt64 instead`)
 	fd = field.Int("count").GoType(false).Descriptor()
-	assert.Error(t, fd.Err())
+	assert.EqualError(t, fd.Err(), `GoType must be a "int" type or ValueScanner`)
 	fd = field.Int("count").GoType(struct{}{}).Descriptor()
 	assert.Error(t, fd.Err())
 	fd = field.Int("count").GoType(new(Count)).Descriptor()
@@ -434,6 +436,10 @@ func TestTypeConstName(t *testing.T) {
 	assert.Equal(t, "TypeJSON", typ.ConstName())
 	typ = field.TypeInt
 	assert.Equal(t, "TypeInt", typ.ConstName())
+	typ = field.TypeInt64
+	assert.Equal(t, "TypeInt64", typ.ConstName())
+	typ = field.TypeOther
+	assert.Equal(t, "TypeOther", typ.ConstName())
 	typ = 21
 	assert.Equal(t, "invalid", typ.ConstName())
 }

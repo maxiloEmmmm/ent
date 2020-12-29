@@ -26,14 +26,14 @@ func ({{ $receiver }} *{{ $builder }}) sqlAll(ctx context.Context) ([]*{{ $.Name
 		{{- with $.Edges }}
 			loadedTypes = [{{ len . }}]bool{
 				{{- range $e := . }}
-					{{ $receiver }}.with{{ pascal $e.Name }} != nil,
+					{{ $receiver }}.{{ $e.EagerLoadField }} != nil,
 				{{- end }}
 			}
 		{{- end }}
 	)
 	{{- with $.ForeignKeys }}
 			{{- with $.FKEdges }}
-				if {{ range $i, $e := . }}{{ if gt $i 0 }} || {{ end }}{{ $receiver }}.with{{ pascal $e.Name }} != nil{{ end }} {
+				if {{ range $i, $e := . }}{{ if gt $i 0 }} || {{ end }}{{ $receiver }}.{{ $e.EagerLoadField }} != nil{{ end }} {
 					withFKs = true
 				}
 			{{- end }}
@@ -41,18 +41,12 @@ func ({{ $receiver }} *{{ $builder }}) sqlAll(ctx context.Context) ([]*{{ $.Name
 				_spec.Node.Columns = append(_spec.Node.Columns, {{ $.Package }}.ForeignKeys...)
 			}
 	{{- end }}
-	_spec.ScanValues = func() []interface{} {
+	_spec.ScanValues = func(columns []string) ([]interface{}, error) {
 		node := &{{ $.Name }}{config: {{ $receiver }}.config}
 		nodes = append(nodes, node)
-		values := node.scanValues()
-		{{- with $.ForeignKeys }}
-			if withFKs {
-				values = append(values, node.fkValues()...)
-			}
-		{{- end }}
-		return values
+		return node.scanValues(columns)
 	}
-	_spec.Assign = func(values ...interface{}) error {
+	_spec.Assign = func(columns []string, values []interface{}) error {
 		if len(nodes) == 0 {
 			return fmt.Errorf("{{ $pkg }}: Assign called without calling ScanValues")
 		}
@@ -60,7 +54,7 @@ func ({{ $receiver }} *{{ $builder }}) sqlAll(ctx context.Context) ([]*{{ $.Name
 		{{- with $.Edges }}
 			node.Edges.loadedTypes = loadedTypes
 		{{- end }}
-		return node.assignValues(values...)
+		return node.assignValues(columns, values)
 	}
 	if err := sqlgraph.QueryNodes(ctx, {{ $receiver }}.driver, _spec); err != nil {
 		return nil, err
@@ -101,6 +95,9 @@ func ({{ $receiver }} *{{ $builder }}) querySpec() *sqlgraph.QuerySpec {
 		},
 		From: {{ $receiver }}.sql,
 		Unique: true,
+	}
+	if fields := {{ $receiver }}.fields; len(fields) > 0 {
+		_spec.Node.Columns = fields
 	}
 	if ps := {{ $receiver }}.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -199,7 +196,7 @@ func ({{ $receiver }} *{{ $builder }}) sqlQuery() *sql.Selector {
 {{ define "dialect/sql/query/eagerloading" }}
 	{{- $e := $.Scope.Edge }}
 	{{- $receiver := $.Scope.Rec }}
-	if query := {{ $receiver }}.with{{ pascal $e.Name }}; query != nil {
+	if query := {{ $receiver }}.{{ $e.EagerLoadField }}; query != nil {
 		{{- if $e.M2M }}
 			fks := make([]driver.Value, 0, len(nodes))
 			ids := make(map[{{ $.ID.Type }}]*{{ $.Name }}, len(nodes))
@@ -328,4 +325,14 @@ func ({{ $receiver }} *{{ $builder }}) sqlQuery() *sql.Selector {
 	{{- else -}}
 		{{ if not $field.Nillable }}*{{ end }}{{ $arg }}
 	{{- end }}
+{{- end }}
+
+{{ define "dialect/sql/query/preparecheck" }}
+	{{- $pkg := $.Scope.Package }}
+	{{- $receiver := $.Scope.Receiver }}
+	for _, f := range {{ $receiver }}.fields {
+		if !{{ $.Package }}.ValidColumn(f) {
+			return &ValidationError{Name: f, err: fmt.Errorf("{{ $pkg }}: invalid field %q for query", f)}
+		}
+	}
 {{- end }}

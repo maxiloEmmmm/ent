@@ -7,7 +7,7 @@ linters-settings:
   dupl:
     threshold: 100
   funlen:
-    lines: 110
+    lines: 120
     statements: 80
   goheader:
     template: |-
@@ -67,10 +67,6 @@ issues:
       linters:
         - dupl
         - gosec
-    - path: entc/load/load.go
-      text: "packages.LoadSyntax is deprecated"
-      linters:
-        - staticcheck
     - text: "Expect WriteFile permissions to be 0600 or less"
       linters:
         - gosec

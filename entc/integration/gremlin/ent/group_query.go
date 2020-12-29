@@ -27,7 +27,7 @@ type GroupQuery struct {
 	limit      *int
 	offset     *int
 	order      []OrderFunc
-	unique     []string
+	fields     []string
 	predicates []predicate.Group
 	// eager-loading edges.
 	withFiles   *FileQuery
@@ -285,13 +285,19 @@ func (gq *GroupQuery) ExistX(ctx context.Context) bool {
 // Clone returns a duplicate of the query builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
 func (gq *GroupQuery) Clone() *GroupQuery {
+	if gq == nil {
+		return nil
+	}
 	return &GroupQuery{
-		config:     gq.config,
-		limit:      gq.limit,
-		offset:     gq.offset,
-		order:      append([]OrderFunc{}, gq.order...),
-		unique:     append([]string{}, gq.unique...),
-		predicates: append([]predicate.Group{}, gq.predicates...),
+		config:      gq.config,
+		limit:       gq.limit,
+		offset:      gq.offset,
+		order:       append([]OrderFunc{}, gq.order...),
+		predicates:  append([]predicate.Group{}, gq.predicates...),
+		withFiles:   gq.withFiles.Clone(),
+		withBlocked: gq.withBlocked.Clone(),
+		withUsers:   gq.withUsers.Clone(),
+		withInfo:    gq.withInfo.Clone(),
 		// clone intermediate query.
 		gremlin: gq.gremlin.Clone(),
 		path:    gq.path,
@@ -382,15 +388,8 @@ func (gq *GroupQuery) GroupBy(field string, fields ...string) *GroupGroupBy {
 //		Scan(ctx, &v)
 //
 func (gq *GroupQuery) Select(field string, fields ...string) *GroupSelect {
-	selector := &GroupSelect{config: gq.config}
-	selector.fields = append([]string{field}, fields...)
-	selector.path = func(ctx context.Context) (prev *dsl.Traversal, err error) {
-		if err := gq.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		return gq.gremlinQuery(), nil
-	}
-	return selector
+	gq.fields = append([]string{field}, fields...)
+	return &GroupSelect{GroupQuery: gq}
 }
 
 func (gq *GroupQuery) prepareQuery(ctx context.Context) error {
@@ -406,7 +405,17 @@ func (gq *GroupQuery) prepareQuery(ctx context.Context) error {
 
 func (gq *GroupQuery) gremlinAll(ctx context.Context) ([]*Group, error) {
 	res := &gremlin.Response{}
-	query, bindings := gq.gremlinQuery().ValueMap(true).Query()
+	traversal := gq.gremlinQuery()
+	if len(gq.fields) > 0 {
+		fields := make([]interface{}, len(gq.fields))
+		for i, f := range gq.fields {
+			fields[i] = f
+		}
+		traversal.ValueMap(fields...)
+	} else {
+		traversal.ValueMap(true)
+	}
+	query, bindings := traversal.Query()
 	if err := gq.driver.Exec(ctx, query, bindings, res); err != nil {
 		return nil, err
 	}
@@ -458,9 +467,7 @@ func (gq *GroupQuery) gremlinQuery() *dsl.Traversal {
 	case limit != nil:
 		v.Limit(*limit)
 	}
-	if unique := gq.unique; len(unique) == 0 {
-		v.Dedup()
-	}
+	v.Dedup()
 	return v
 }
 
@@ -724,20 +731,17 @@ func (ggb *GroupGroupBy) gremlinQuery() *dsl.Traversal {
 
 // GroupSelect is the builder for select fields of Group entities.
 type GroupSelect struct {
-	config
-	fields []string
+	*GroupQuery
 	// intermediate query (i.e. traversal path).
 	gremlin *dsl.Traversal
-	path    func(context.Context) (*dsl.Traversal, error)
 }
 
 // Scan applies the selector query and scan the result into the given value.
 func (gs *GroupSelect) Scan(ctx context.Context, v interface{}) error {
-	query, err := gs.path(ctx)
-	if err != nil {
+	if err := gs.prepareQuery(ctx); err != nil {
 		return err
 	}
-	gs.gremlin = query
+	gs.gremlin = gs.GroupQuery.gremlinQuery()
 	return gs.gremlinScan(ctx, v)
 }
 

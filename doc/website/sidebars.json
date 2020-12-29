@@ -8,8 +8,8 @@
       "schema-fields",
       "schema-edges",
       "schema-indexes",
-      "schema-config",
-      "schema-mixin"
+      "schema-mixin",
+      "schema-annotations"
     ],
     "Code Generation": [
       "code-gen",
@@ -31,7 +31,9 @@
       "templates",
       "graphql",
       "sql-integration",
-      "testing"
+      "testing",
+      "faq",
+      "feature-flags"
     ]
   }
 }

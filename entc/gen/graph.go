@@ -7,6 +7,7 @@ package gen
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"go/parser"
 	"go/token"
@@ -51,7 +52,11 @@ type (
 		// Features defines a list of additional features to add to the codegen phase.
 		// For example, the PrivacyFeature.
 		Features []Feature
+
+		// Hooks holds an optional list of Hooks to apply on the graph before/after the code-generation.
+		Hooks []Hook
 	}
+
 	// Graph holds the nodes/entities of the loaded graph schema. Note that, it doesn't
 	// hold the edges of the graph. Instead, each Type holds the edges for other Types.
 	Graph struct {
@@ -61,7 +66,35 @@ type (
 		// Schemas holds the raw interfaces for the loaded schemas.
 		Schemas []*load.Schema
 	}
+
+	// Generator is the interface that wraps the Generate method.
+	Generator interface {
+		// Generate generates the ent artifacts for the given graph.
+		Generate(*Graph) error
+	}
+
+	// The GenerateFunc type is an adapter to allow the use of ordinary
+	// function as Generator. If f is a function with the appropriate signature,
+	// GenerateFunc(f) is a Generator that calls f.
+	GenerateFunc func(*Graph) error
+
+	// Hook defines the "generate middleware". A function that gets a Generator
+	// and returns a Generator. For example:
+	//
+	//	hook := func(next gen.Generator) gen.Generator {
+	//		return gen.GenerateFunc(func(g *Graph) error {
+	//			fmt.Println("Graph:", g)
+	//			return next.Generate(g)
+	//		})
+	//	}
+	//
+	Hook func(Generator) Generator
 )
+
+// Generate calls f(g).
+func (f GenerateFunc) Generate(g *Graph) error {
+	return f(g)
+}
 
 // NewGraph creates a new Graph for the code generation from the given schema definitions.
 // It fails if one of the schemas is invalid.
@@ -114,6 +147,15 @@ func (g *Graph) defaults() {
 
 // Gen generates the artifacts for the graph.
 func (g *Graph) Gen() error {
+	var gen Generator = GenerateFunc(generate)
+	for i := len(g.Hooks) - 1; i >= 0; i-- {
+		gen = g.Hooks[i](gen)
+	}
+	return gen.Generate(g)
+}
+
+// generate is the default Generator implementation.
+func generate(g *Graph) error {
 	var (
 		assets   assets
 		external []GraphTemplate
@@ -189,6 +231,8 @@ func (g *Graph) addEdges(schema *load.Schema) {
 	for _, e := range schema.Edges {
 		typ, ok := g.typ(e.Type)
 		expect(ok, "type %q does not exist for edge", e.Type)
+		_, ok = t.fields[e.Name]
+		expect(!ok, "%s schema can't contain field and edge with the same name %q", schema.Name, e.Name)
 		_, ok = seen[e.Name]
 		expect(!ok, "%s schema contains multiple %q edges", schema.Name, e.Name)
 		seen[e.Name] = struct{}{}
@@ -351,7 +395,9 @@ func resolve(t *Type) error {
 func (g *Graph) Tables() (all []*schema.Table) {
 	tables := make(map[string]*schema.Table)
 	for _, n := range g.Nodes {
-		table := schema.NewTable(n.Table()).AddPrimary(n.ID.PK())
+		table := schema.NewTable(n.Table()).
+			AddPrimary(n.ID.PK()).
+			SetAnnotation(n.EntSQL())
 		for _, f := range n.Fields {
 			table.AddColumn(f.Column())
 		}
@@ -359,7 +405,7 @@ func (g *Graph) Tables() (all []*schema.Table) {
 		all = append(all, table)
 	}
 	for _, n := range g.Nodes {
-		// Foreign key + reference OR join table.
+		// Foreign key + reference or a join table.
 		for _, e := range n.Edges {
 			if e.IsInverse() {
 				continue
@@ -440,6 +486,35 @@ func (g *Graph) Tables() (all []*schema.Table) {
 // SupportMigrate reports if the codegen supports schema migration.
 func (g *Graph) SupportMigrate() bool {
 	return g.Storage.SchemaMode.Support(Migrate)
+}
+
+// Snapshot holds the information for storing the schema snapshot.
+type Snapshot struct {
+	Schema   string
+	Package  string
+	Schemas  []*load.Schema
+	Features []string
+}
+
+// SchemaSnapshot returns a JSON string represents the graph schema in loadable format.
+func (g *Graph) SchemaSnapshot() (string, error) {
+	schemas := make([]*load.Schema, len(g.Nodes))
+	for i := range g.Nodes {
+		schemas[i] = g.Nodes[i].schema
+	}
+	snap := Snapshot{
+		Schema:  g.Schema,
+		Package: g.Package,
+		Schemas: schemas,
+	}
+	for _, feat := range g.Features {
+		snap.Features = append(snap.Features, feat.Name)
+	}
+	out, err := json.Marshal(snap)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 func (g *Graph) typ(name string) (*Type, bool) {

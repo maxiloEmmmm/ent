@@ -71,8 +71,20 @@ func TestMySQL(t *testing.T) {
 	}
 }
 
+func TestMaria(t *testing.T) {
+	client := enttest.Open(t, dialect.MySQL, "root:pass@tcp(localhost:4306)/test?parseTime=True", opts)
+	defer client.Close()
+	for _, tt := range tests {
+		name := runtime.FuncForPC(reflect.ValueOf(tt).Pointer()).Name()
+		t.Run(name[strings.LastIndex(name, ".")+1:], func(t *testing.T) {
+			drop(t, client)
+			tt(t, client)
+		})
+	}
+}
+
 func TestPostgres(t *testing.T) {
-	for version, port := range map[string]int{"10": 5430, "11": 5431, "12": 5433} {
+	for version, port := range map[string]int{"10": 5430, "11": 5431, "12": 5433, "13": 5434} {
 		t.Run(version, func(t *testing.T) {
 			client := enttest.Open(t, dialect.Postgres, fmt.Sprintf("host=localhost port=%d user=postgres dbname=test password=pass sslmode=disable", port), opts)
 			defer client.Close()
@@ -130,6 +142,9 @@ func Sanity(t *testing.T, client *ent.Client) {
 	require := require.New(t)
 	ctx := context.Background()
 	usr := client.User.Create().SetName("foo").SetAge(20).SaveX(ctx)
+	client.User.Update().ExecX(ctx)
+	client.User.UpdateOne(usr).ExecX(ctx)
+	client.Node.Update().Where(node.ID(usr.ID)).ExecX(ctx)
 	require.Equal("foo", usr.Name)
 	require.Equal(20, usr.Age)
 	require.NotEmpty(usr.ID)
@@ -314,6 +329,15 @@ func Select(t *testing.T, client *ent.Client) {
 		ScanX(ctx, &v)
 	require.Equal([]int{30, 30, 30}, []int{v[0].Age, v[1].Age, v[2].Age})
 	require.Equal([]string{"bar", "baz", "foo"}, []string{v[0].Name, v[1].Name, v[2].Name})
+
+	users := client.User.
+		Query().
+		Select(user.FieldAge).
+		AllX(ctx)
+	for i := range users {
+		require.Empty(users[i].Name)
+		require.NotZero(users[i].Age)
+	}
 }
 
 func Predicate(t *testing.T, client *ent.Client) {
@@ -604,7 +628,7 @@ func Relation(t *testing.T, client *ent.Client) {
 	_, err = client.Group.UpdateOne(grp).SetMaxUsers(-10).Save(ctx)
 	require.Error(err, "max_users validator failed")
 	_, err = client.Group.Query().Select("unknown_field").String(ctx)
-	require.EqualError(err, "invalid field \"unknown_field\" for selection")
+	require.EqualError(err, "ent: invalid field \"unknown_field\" for query")
 	_, err = client.Group.Query().GroupBy("unknown_field").String(ctx)
 	require.EqualError(err, "invalid field \"unknown_field\" for group-by")
 	_, err = client.User.Query().Order(ent.Asc("invalid")).Only(ctx)

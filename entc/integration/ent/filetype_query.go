@@ -27,7 +27,7 @@ type FileTypeQuery struct {
 	limit      *int
 	offset     *int
 	order      []OrderFunc
-	unique     []string
+	fields     []string
 	predicates []predicate.FileType
 	// eager-loading edges.
 	withFiles *FileQuery
@@ -248,13 +248,16 @@ func (ftq *FileTypeQuery) ExistX(ctx context.Context) bool {
 // Clone returns a duplicate of the query builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
 func (ftq *FileTypeQuery) Clone() *FileTypeQuery {
+	if ftq == nil {
+		return nil
+	}
 	return &FileTypeQuery{
 		config:     ftq.config,
 		limit:      ftq.limit,
 		offset:     ftq.offset,
 		order:      append([]OrderFunc{}, ftq.order...),
-		unique:     append([]string{}, ftq.unique...),
 		predicates: append([]predicate.FileType{}, ftq.predicates...),
+		withFiles:  ftq.withFiles.Clone(),
 		// clone intermediate query.
 		sql:  ftq.sql.Clone(),
 		path: ftq.path,
@@ -312,18 +315,16 @@ func (ftq *FileTypeQuery) GroupBy(field string, fields ...string) *FileTypeGroup
 //		Scan(ctx, &v)
 //
 func (ftq *FileTypeQuery) Select(field string, fields ...string) *FileTypeSelect {
-	selector := &FileTypeSelect{config: ftq.config}
-	selector.fields = append([]string{field}, fields...)
-	selector.path = func(ctx context.Context) (prev *sql.Selector, err error) {
-		if err := ftq.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		return ftq.sqlQuery(), nil
-	}
-	return selector
+	ftq.fields = append([]string{field}, fields...)
+	return &FileTypeSelect{FileTypeQuery: ftq}
 }
 
 func (ftq *FileTypeQuery) prepareQuery(ctx context.Context) error {
+	for _, f := range ftq.fields {
+		if !filetype.ValidColumn(f) {
+			return &ValidationError{Name: f, err: fmt.Errorf("ent: invalid field %q for query", f)}
+		}
+	}
 	if ftq.path != nil {
 		prev, err := ftq.path(ctx)
 		if err != nil {
@@ -342,19 +343,18 @@ func (ftq *FileTypeQuery) sqlAll(ctx context.Context) ([]*FileType, error) {
 			ftq.withFiles != nil,
 		}
 	)
-	_spec.ScanValues = func() []interface{} {
+	_spec.ScanValues = func(columns []string) ([]interface{}, error) {
 		node := &FileType{config: ftq.config}
 		nodes = append(nodes, node)
-		values := node.scanValues()
-		return values
+		return node.scanValues(columns)
 	}
-	_spec.Assign = func(values ...interface{}) error {
+	_spec.Assign = func(columns []string, values []interface{}) error {
 		if len(nodes) == 0 {
 			return fmt.Errorf("ent: Assign called without calling ScanValues")
 		}
 		node := nodes[len(nodes)-1]
 		node.Edges.loadedTypes = loadedTypes
-		return node.assignValues(values...)
+		return node.assignValues(columns, values)
 	}
 	if err := sqlgraph.QueryNodes(ctx, ftq.driver, _spec); err != nil {
 		return nil, err
@@ -420,6 +420,9 @@ func (ftq *FileTypeQuery) querySpec() *sqlgraph.QuerySpec {
 		},
 		From:   ftq.sql,
 		Unique: true,
+	}
+	if fields := ftq.fields; len(fields) > 0 {
+		_spec.Node.Columns = fields
 	}
 	if ps := ftq.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -721,20 +724,17 @@ func (ftgb *FileTypeGroupBy) sqlQuery() *sql.Selector {
 
 // FileTypeSelect is the builder for select fields of FileType entities.
 type FileTypeSelect struct {
-	config
-	fields []string
+	*FileTypeQuery
 	// intermediate query (i.e. traversal path).
-	sql  *sql.Selector
-	path func(context.Context) (*sql.Selector, error)
+	sql *sql.Selector
 }
 
 // Scan applies the selector query and scan the result into the given value.
 func (fts *FileTypeSelect) Scan(ctx context.Context, v interface{}) error {
-	query, err := fts.path(ctx)
-	if err != nil {
+	if err := fts.prepareQuery(ctx); err != nil {
 		return err
 	}
-	fts.sql = query
+	fts.sql = fts.FileTypeQuery.sqlQuery()
 	return fts.sqlScan(ctx, v)
 }
 
@@ -934,11 +934,6 @@ func (fts *FileTypeSelect) BoolX(ctx context.Context) bool {
 }
 
 func (fts *FileTypeSelect) sqlScan(ctx context.Context, v interface{}) error {
-	for _, f := range fts.fields {
-		if !filetype.ValidColumn(f) {
-			return &ValidationError{Name: f, err: fmt.Errorf("invalid field %q for selection", f)}
-		}
-	}
 	rows := &sql.Rows{}
 	query, args := fts.sqlQuery().Query()
 	if err := fts.driver.Query(ctx, query, args, rows); err != nil {

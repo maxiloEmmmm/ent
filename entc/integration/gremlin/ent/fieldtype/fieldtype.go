@@ -107,6 +107,10 @@ const (
 	FieldNullFloat = "null_float"
 	// FieldRole holds the string denoting the role field in the database.
 	FieldRole = "role"
+	// FieldMAC holds the string denoting the mac field in the database.
+	FieldMAC = "mac"
+	// FieldUUID holds the string denoting the uuid field in the database.
+	FieldUUID = "uuid"
 )
 
 var (
@@ -116,6 +120,8 @@ var (
 	NdirValidator func(string) error
 	// LinkValidator is a validator for the "link" field. It is called by the builders before save.
 	LinkValidator func(string) error
+	// MACValidator is a validator for the "mac" field. It is called by the builders before save.
+	MACValidator func(string) error
 )
 
 // State defines the type for the state enum field.

@@ -3,8 +3,8 @@ id: templates
 title: External Templates
 ---
 
-`entc` accepts external [Go templates](https://golang.org/pkg/text/template) to execute using the `--template` flag.
-If the template name is already defined by `entc`, it will override the existing one. Otherwise, it will write the
+`ent` accepts external [Go templates](https://golang.org/pkg/text/template) to execute using the `--template` flag.
+If the template name already defined by `ent`, it will override the existing one. Otherwise, it will write the
 execution output to a file with the same name as the template. For example:
 
 `stringer.tmpl` - This template example will be written in a file named: `ent/stringer.go`.
@@ -69,7 +69,7 @@ In order to override an existing template, use its name. For example:
 ```
 
 ## Annotations
-Schema annotations allow to attach metadata to fields and edges and inject them to external templates.  
+Schema annotations allow attaching metadata to fields and edges and inject them to external templates.  
 An annotation must be a Go type that is serializable to JSON raw value (e.g. struct, map or slice)
 and implement the [Annotation](https://pkg.go.dev/github.com/facebook/ent/schema/field?tab=doc#Annotation) interface.
 

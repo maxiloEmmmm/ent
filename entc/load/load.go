@@ -42,7 +42,7 @@ type Config struct {
 	// Path is the path for the schema package.
 	Path string
 	// Names are the schema names to run the code generation on.
-	// Empty means all schemas in the directory.
+	// Empty means all schema in the directory.
 	Names []string
 }
 
@@ -50,7 +50,7 @@ type Config struct {
 func (c *Config) Load() (*SchemaSpec, error) {
 	pkgPath, err := c.load()
 	if err != nil {
-		return nil, fmt.Errorf("load schemas dir: %v", err)
+		return nil, fmt.Errorf("load schema dir: %w", err)
 	}
 	if len(c.Names) == 0 {
 		return nil, fmt.Errorf("no schema found in: %s", c.Path)
@@ -95,9 +95,11 @@ var entInterface = reflect.TypeOf(struct{ ent.Interface }{}).Field(0).Type
 
 // load loads the schemas info.
 func (c *Config) load() (string, error) {
-	pkgs, err := packages.Load(&packages.Config{Mode: packages.LoadSyntax}, c.Path, entInterface.PkgPath())
+	pkgs, err := packages.Load(&packages.Config{
+		Mode: packages.NeedName | packages.NeedTypes | packages.NeedTypesInfo,
+	}, c.Path, entInterface.PkgPath())
 	if err != nil {
-		return "", fmt.Errorf("loading package: %v", err)
+		return "", fmt.Errorf("loading package: %w", err)
 	}
 	if len(pkgs) < 2 {
 		return "", fmt.Errorf("missing package information for: %s", c.Path)
@@ -132,7 +134,7 @@ func (c *Config) load() (string, error) {
 	return pkg.PkgPath, nil
 }
 
-//go:generate go run github.com/go-bindata/go-bindata/go-bindata -pkg=internal -o=internal/bindata.go -modtime=1 ./template/... schema.go
+//go:generate go run github.com/go-bindata/go-bindata/go-bindata -pkg=internal -o=internal/bindata.go -mode=420 -modtime=1 ./template/... schema.go
 
 var buildTmpl = templates()
 
@@ -181,7 +183,7 @@ func schemaTemplates() ([]string, error) {
 }
 
 func filename(pkg string) string {
-	name := strings.Replace(pkg, "/", "_", -1)
+	name := strings.ReplaceAll(pkg, "/", "_")
 	return fmt.Sprintf("entc_%s_%d", name, time.Now().Unix())
 }
 

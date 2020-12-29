@@ -23,6 +23,7 @@ const (
 	TypeBytes
 	TypeEnum
 	TypeString
+	TypeOther
 	TypeInt8
 	TypeInt16
 	TypeInt32
@@ -49,6 +50,16 @@ func (t Type) String() string {
 // Numeric reports if the given type is a numeric type.
 func (t Type) Numeric() bool {
 	return t >= TypeInt8 && t < endTypes
+}
+
+// Float reports if the given type is a float type.
+func (t Type) Float() bool {
+	return t == TypeFloat32 || t == TypeFloat64
+}
+
+// Integer reports if the given type is an integral type.
+func (t Type) Integer() bool {
+	return t.Numeric() && !t.Float()
 }
 
 // Valid reports if the given type if known type.
@@ -157,6 +168,7 @@ var (
 		TypeTime:  "TypeTime",
 		TypeEnum:  "TypeEnum",
 		TypeBytes: "TypeBytes",
+		TypeOther: "TypeOther",
 	}
 )
 

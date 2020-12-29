@@ -37,6 +37,7 @@ type ColumnBuilder struct {
 	attr   string             // extra attributes.
 	modify bool               // modify existing.
 	fk     *ForeignKeyBuilder // foreign-key constraint.
+	check  func(*Builder)     // column checks.
 }
 
 // Column returns a new ColumnBuilder with the given name.
@@ -66,12 +67,18 @@ func (c *ColumnBuilder) Constraint(fk *ForeignKeyBuilder) *ColumnBuilder {
 	return c
 }
 
+// Check adds a CHECK clause to the ADD COLUMN statement.
+func (c *ColumnBuilder) Check(check func(*Builder)) *ColumnBuilder {
+	c.check = check
+	return c
+}
+
 // Query returns query representation of a Column.
 func (c *ColumnBuilder) Query() (string, []interface{}) {
 	c.Ident(c.name)
 	if c.typ != "" {
 		if c.postgres() && c.modify {
-			c.Pad().WriteString("TYPE")
+			c.WriteString(" TYPE")
 		}
 		c.Pad().WriteString(c.typ)
 	}
@@ -85,6 +92,10 @@ func (c *ColumnBuilder) Query() (string, []interface{}) {
 			c.Pad().WriteString(action)
 		}
 	}
+	if c.check != nil {
+		c.WriteString(" CHECK ")
+		c.Nested(c.check)
+	}
 	return c.String(), c.args
 }
 
@@ -95,6 +106,7 @@ type TableBuilder struct {
 	exists      bool      // check existence.
 	charset     string    // table charset.
 	collation   string    // table collation.
+	options     string    // table options.
 	columns     []Querier // table columns.
 	primary     []string  // primary key.
 	constraints []Querier // foreign keys and indices.
@@ -172,6 +184,12 @@ func (t *TableBuilder) Collate(s string) *TableBuilder {
 	return t
 }
 
+// Options appends additional options to to the statement (MySQL only).
+func (t *TableBuilder) Options(s string) *TableBuilder {
+	t.options = s
+	return t
+}
+
 // Query returns query representation of a `CREATE TABLE` statement.
 //
 // CREATE TABLE [IF NOT EXISTS] name
@@ -201,6 +219,9 @@ func (t *TableBuilder) Query() (string, []interface{}) {
 	}
 	if t.collation != "" {
 		t.WriteString(" COLLATE " + t.collation)
+	}
+	if t.options != "" {
+		t.WriteString(" " + t.options)
 	}
 	return t.String(), t.args
 }
@@ -731,6 +752,15 @@ func (u *UpdateBuilder) Where(p *Predicate) *UpdateBuilder {
 	return u
 }
 
+// FromSelect makes it possible to update entities that match the sub-query.
+func (u *UpdateBuilder) FromSelect(s *Selector) *UpdateBuilder {
+	u.Where(s.where)
+	if table, _ := s.from.(*SelectTable); table != nil {
+		u.table = table.name
+	}
+	return u
+}
+
 // Empty reports whether this builder does not contain update changes.
 func (u *UpdateBuilder) Empty() bool {
 	return len(u.columns) == 0 && len(u.nulls) == 0
@@ -739,7 +769,7 @@ func (u *UpdateBuilder) Empty() bool {
 // Query returns query representation of an `UPDATE` statement.
 func (u *UpdateBuilder) Query() (string, []interface{}) {
 	u.WriteString("UPDATE ")
-	u.Ident(u.table).Pad().WriteString("SET ")
+	u.Ident(u.table).WriteString(" SET ")
 	for i, c := range u.nulls {
 		if i > 0 {
 			u.Comma()
@@ -801,7 +831,7 @@ func (d *DeleteBuilder) Where(p *Predicate) *DeleteBuilder {
 	return d
 }
 
-// FromSelect make it possible to delete a sub query.
+// FromSelect makes it possible to delete a sub query.
 func (d *DeleteBuilder) FromSelect(s *Selector) *DeleteBuilder {
 	d.Where(s.where)
 	if table, _ := s.from.(*SelectTable); table != nil {
@@ -1146,10 +1176,12 @@ func (p *Predicate) ContainsFold(col, sub string) *Predicate {
 	})
 }
 
+// CompositeGT returns a comiposite ">" predicate
 func CompositeGT(columns []string, args ...interface{}) *Predicate {
 	return P().CompositeGT(columns, args...)
 }
 
+// CompositeLT returns a comiposite "<" predicate
 func CompositeLT(columns []string, args ...interface{}) *Predicate {
 	return P().CompositeLT(columns, args...)
 }
@@ -1166,13 +1198,13 @@ func (p *Predicate) compositeP(operator string, columns []string, args ...interf
 	})
 }
 
-// GT returns a composite ">" predicate.
+// CompositeGT returns a composite ">" predicate.
 func (p *Predicate) CompositeGT(columns []string, args ...interface{}) *Predicate {
 	const operator = " > "
 	return p.compositeP(operator, columns, args...)
 }
 
-// LT appends a composite "<" predicate.
+// CompositeLT appends a composite "<" predicate.
 func (p *Predicate) CompositeLT(columns []string, args ...interface{}) *Predicate {
 	const operator = " < "
 	return p.compositeP(operator, columns, args...)
@@ -1187,6 +1219,10 @@ func (p *Predicate) Append(f func(*Builder)) *Predicate {
 
 // Query returns query representation of a predicate.
 func (p *Predicate) Query() (string, []interface{}) {
+	if p.Len() > 0 || len(p.args) > 0 {
+		p.Reset()
+		p.args = nil
+	}
 	for _, f := range p.fns {
 		f(&p.Builder)
 	}
@@ -1361,9 +1397,10 @@ type TableView interface {
 // SelectTable is a table selector.
 type SelectTable struct {
 	Builder
-	quote bool
-	name  string
-	as    string
+	as     string
+	name   string
+	schema string
+	quote  bool
 }
 
 // Table returns a new table selector.
@@ -1373,6 +1410,12 @@ type SelectTable struct {
 //
 func Table(name string) *SelectTable {
 	return &SelectTable{quote: true, name: name}
+}
+
+// Schema sets the schema name of the table.
+func (s *SelectTable) Schema(name string) *SelectTable {
+	s.schema = name
+	return s
 }
 
 // As adds the AS clause to the table selector.
@@ -1388,9 +1431,10 @@ func (s *SelectTable) C(column string) string {
 		name = s.as
 	}
 	b := &Builder{dialect: s.dialect}
-	b.Ident(name)
-	b.WriteByte('.')
-	b.Ident(column)
+	if s.schema != "" && s.as == "" {
+		b.Ident(s.schema).WriteByte('.')
+	}
+	b.Ident(name).WriteByte('.').Ident(column)
 	return b.String()
 }
 
@@ -1417,6 +1461,9 @@ func (s *SelectTable) ref() string {
 		return s.name
 	}
 	b := &Builder{dialect: s.dialect}
+	if s.schema != "" {
+		b.Ident(s.schema).WriteByte('.')
+	}
 	b.Ident(s.name)
 	if s.as != "" {
 		b.WriteString(" AS ")
@@ -1924,7 +1971,7 @@ func (b *Builder) Quote(ident string) string {
 		// If it was quoted with the wrong
 		// identifier character.
 		if strings.Contains(ident, "`") {
-			return strings.Replace(ident, "`", `"`, -1)
+			return strings.ReplaceAll(ident, "`", `"`)
 		}
 		return strconv.Quote(ident)
 	// An identifier for unknown dialect.
@@ -1944,7 +1991,7 @@ func (b *Builder) Ident(s string) *Builder {
 	case (isFunc(s) || isModifier(s)) && b.postgres():
 		// Modifiers and aggregation functions that
 		// were called without dialect information.
-		b.WriteString(strings.Replace(s, "`", `"`, -1))
+		b.WriteString(strings.ReplaceAll(s, "`", `"`))
 	default:
 		b.WriteString(s)
 	}
@@ -1999,6 +2046,7 @@ func (b *Builder) Err() error {
 // An Op represents a predicate operator.
 type Op int
 
+// Predicate operators
 const (
 	OpEQ      Op = iota // logical and.
 	OpNEQ               // <>

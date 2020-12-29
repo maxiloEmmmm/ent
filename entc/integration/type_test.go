@@ -7,6 +7,7 @@ package integration
 import (
 	"context"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"testing"
@@ -82,6 +83,10 @@ func Types(t *testing.T, client *ent.Client) {
 	require.Equal("str", ft.NullStr.String)
 	require.Equal("localhost", ft.Link.String())
 	require.Equal("localhost", ft.NullLink.String())
+	mac, err := net.ParseMAC("3b:b3:6b:3c:10:79")
+	require.NoError(err)
+	dt, err := time.Parse(time.RFC3339, "1906-01-02T00:00:00+00:00")
+	require.NoError(err)
 
 	ft = ft.Update().
 		SetInt(1).
@@ -97,7 +102,7 @@ func Types(t *testing.T, client *ent.Client) {
 		SetNillableInt16(math.MaxInt16).
 		SetNillableInt32(math.MaxInt32).
 		SetNillableInt64(math.MaxInt64).
-		SetDatetime(time.Now()).
+		SetDatetime(dt).
 		SetDecimal(10.20).
 		SetDir("dir").
 		SetNdir("ndir").
@@ -108,6 +113,7 @@ func Types(t *testing.T, client *ent.Client) {
 		SetSchemaInt(64).
 		SetSchemaInt8(8).
 		SetSchemaInt64(64).
+		SetMAC(schema.MAC{HardwareAddr: mac}).
 		SaveX(ctx)
 
 	require.Equal(int8(math.MaxInt8), ft.OptionalInt8)
@@ -119,7 +125,7 @@ func Types(t *testing.T, client *ent.Client) {
 	require.Equal(int32(math.MaxInt32), *ft.NillableInt32)
 	require.Equal(int64(math.MaxInt64), *ft.NillableInt64)
 	require.Equal(10.20, ft.Decimal)
-	require.False(ft.Datetime.IsZero())
+	require.True(dt.Equal(ft.Datetime))
 	require.Equal(http.Dir("dir"), ft.Dir)
 	require.NotNil(*ft.Ndir)
 	require.Equal(http.Dir("ndir"), *ft.Ndir)
@@ -130,6 +136,7 @@ func Types(t *testing.T, client *ent.Client) {
 	require.Equal(schema.Int(64), ft.SchemaInt)
 	require.Equal(schema.Int8(8), ft.SchemaInt8)
 	require.Equal(schema.Int64(64), ft.SchemaInt64)
+	require.Equal(mac.String(), ft.MAC.String())
 
 	_, err = client.Task.CreateBulk(
 		client.Task.Create().SetPriority(schema.PriorityLow),

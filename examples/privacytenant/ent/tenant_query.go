@@ -25,7 +25,7 @@ type TenantQuery struct {
 	limit      *int
 	offset     *int
 	order      []OrderFunc
-	unique     []string
+	fields     []string
 	predicates []predicate.Tenant
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
@@ -222,12 +222,14 @@ func (tq *TenantQuery) ExistX(ctx context.Context) bool {
 // Clone returns a duplicate of the query builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
 func (tq *TenantQuery) Clone() *TenantQuery {
+	if tq == nil {
+		return nil
+	}
 	return &TenantQuery{
 		config:     tq.config,
 		limit:      tq.limit,
 		offset:     tq.offset,
 		order:      append([]OrderFunc{}, tq.order...),
-		unique:     append([]string{}, tq.unique...),
 		predicates: append([]predicate.Tenant{}, tq.predicates...),
 		// clone intermediate query.
 		sql:  tq.sql.Clone(),
@@ -275,24 +277,25 @@ func (tq *TenantQuery) GroupBy(field string, fields ...string) *TenantGroupBy {
 //		Scan(ctx, &v)
 //
 func (tq *TenantQuery) Select(field string, fields ...string) *TenantSelect {
-	selector := &TenantSelect{config: tq.config}
-	selector.fields = append([]string{field}, fields...)
-	selector.path = func(ctx context.Context) (prev *sql.Selector, err error) {
-		if err := tq.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		return tq.sqlQuery(), nil
-	}
-	return selector
+	tq.fields = append([]string{field}, fields...)
+	return &TenantSelect{TenantQuery: tq}
 }
 
 func (tq *TenantQuery) prepareQuery(ctx context.Context) error {
+	for _, f := range tq.fields {
+		if !tenant.ValidColumn(f) {
+			return &ValidationError{Name: f, err: fmt.Errorf("ent: invalid field %q for query", f)}
+		}
+	}
 	if tq.path != nil {
 		prev, err := tq.path(ctx)
 		if err != nil {
 			return err
 		}
 		tq.sql = prev
+	}
+	if tenant.Policy == nil {
+		return errors.New("ent: uninitialized tenant.Policy (forgotten import ent/runtime?)")
 	}
 	if err := tenant.Policy.EvalQuery(ctx, tq); err != nil {
 		return err
@@ -305,18 +308,17 @@ func (tq *TenantQuery) sqlAll(ctx context.Context) ([]*Tenant, error) {
 		nodes = []*Tenant{}
 		_spec = tq.querySpec()
 	)
-	_spec.ScanValues = func() []interface{} {
+	_spec.ScanValues = func(columns []string) ([]interface{}, error) {
 		node := &Tenant{config: tq.config}
 		nodes = append(nodes, node)
-		values := node.scanValues()
-		return values
+		return node.scanValues(columns)
 	}
-	_spec.Assign = func(values ...interface{}) error {
+	_spec.Assign = func(columns []string, values []interface{}) error {
 		if len(nodes) == 0 {
 			return fmt.Errorf("ent: Assign called without calling ScanValues")
 		}
 		node := nodes[len(nodes)-1]
-		return node.assignValues(values...)
+		return node.assignValues(columns, values)
 	}
 	if err := sqlgraph.QueryNodes(ctx, tq.driver, _spec); err != nil {
 		return nil, err
@@ -352,6 +354,9 @@ func (tq *TenantQuery) querySpec() *sqlgraph.QuerySpec {
 		},
 		From:   tq.sql,
 		Unique: true,
+	}
+	if fields := tq.fields; len(fields) > 0 {
+		_spec.Node.Columns = fields
 	}
 	if ps := tq.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -653,20 +658,17 @@ func (tgb *TenantGroupBy) sqlQuery() *sql.Selector {
 
 // TenantSelect is the builder for select fields of Tenant entities.
 type TenantSelect struct {
-	config
-	fields []string
+	*TenantQuery
 	// intermediate query (i.e. traversal path).
-	sql  *sql.Selector
-	path func(context.Context) (*sql.Selector, error)
+	sql *sql.Selector
 }
 
 // Scan applies the selector query and scan the result into the given value.
 func (ts *TenantSelect) Scan(ctx context.Context, v interface{}) error {
-	query, err := ts.path(ctx)
-	if err != nil {
+	if err := ts.prepareQuery(ctx); err != nil {
 		return err
 	}
-	ts.sql = query
+	ts.sql = ts.TenantQuery.sqlQuery()
 	return ts.sqlScan(ctx, v)
 }
 
@@ -866,11 +868,6 @@ func (ts *TenantSelect) BoolX(ctx context.Context) bool {
 }
 
 func (ts *TenantSelect) sqlScan(ctx context.Context, v interface{}) error {
-	for _, f := range ts.fields {
-		if !tenant.ValidColumn(f) {
-			return &ValidationError{Name: f, err: fmt.Errorf("invalid field %q for selection", f)}
-		}
-	}
 	rows := &sql.Rows{}
 	query, args := ts.sqlQuery().Query()
 	if err := ts.driver.Query(ctx, query, args, rows); err != nil {

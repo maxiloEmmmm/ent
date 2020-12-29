@@ -10,6 +10,7 @@ import (
 	"reflect"
 
 	"github.com/facebook/ent"
+	"github.com/facebook/ent/schema"
 	"github.com/facebook/ent/schema/edge"
 	"github.com/facebook/ent/schema/field"
 	"github.com/facebook/ent/schema/index"
@@ -92,7 +93,7 @@ func NewEdge(ed *edge.Descriptor) *Edge {
 		Annotations: make(map[string]interface{}),
 	}
 	for _, at := range ed.Annotations {
-		ne.Annotations[at.Name()] = at
+		ne.addAnnotation(at)
 	}
 	if ref := ed.Ref; ref != nil {
 		ne.Ref = NewEdge(ref)
@@ -124,7 +125,7 @@ func NewField(fd *field.Descriptor) (*Field, error) {
 		Annotations:   make(map[string]interface{}),
 	}
 	for _, at := range fd.Annotations {
-		sf.Annotations[at.Name()] = at
+		sf.addAnnotation(at)
 	}
 	if sf.Info == nil {
 		return nil, fmt.Errorf("missing type info for field %q", sf.Name)
@@ -163,7 +164,7 @@ func MarshalSchema(schema ent.Interface) (b []byte, err error) {
 	}
 	// Schema annotations override mixed-in annotations.
 	for _, at := range schema.Annotations() {
-		s.Annotations[at.Name()] = at
+		s.addAnnotation(at)
 	}
 	if err := s.loadFields(schema); err != nil {
 		return nil, fmt.Errorf("schema %q: %v", s.Name, err)
@@ -265,7 +266,7 @@ func (s *Schema) loadMixin(schema ent.Interface) error {
 			})
 		}
 		for _, at := range mx.Annotations() {
-			s.Annotations[at.Name()] = at
+			s.addAnnotation(at)
 		}
 	}
 	return nil
@@ -311,6 +312,39 @@ func (s *Schema) loadPolicy(schema ent.Interface) error {
 		s.Policy = append(s.Policy, &Position{})
 	}
 	return nil
+}
+
+func (s *Schema) addAnnotation(an schema.Annotation) {
+	curr, ok := s.Annotations[an.Name()]
+	if !ok {
+		s.Annotations[an.Name()] = an
+		return
+	}
+	if m, ok := curr.(schema.Merger); ok {
+		s.Annotations[an.Name()] = m.Merge(an)
+	}
+}
+
+func (e *Edge) addAnnotation(an schema.Annotation) {
+	curr, ok := e.Annotations[an.Name()]
+	if !ok {
+		e.Annotations[an.Name()] = an
+		return
+	}
+	if m, ok := curr.(schema.Merger); ok {
+		e.Annotations[an.Name()] = m.Merge(an)
+	}
+}
+
+func (f *Field) addAnnotation(an schema.Annotation) {
+	curr, ok := f.Annotations[an.Name()]
+	if !ok {
+		f.Annotations[an.Name()] = an
+		return
+	}
+	if m, ok := curr.(schema.Merger); ok {
+		f.Annotations[an.Name()] = m.Merge(an)
+	}
 }
 
 func (f *Field) defaults() error {

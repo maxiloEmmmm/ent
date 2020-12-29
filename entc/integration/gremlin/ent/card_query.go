@@ -28,7 +28,7 @@ type CardQuery struct {
 	limit      *int
 	offset     *int
 	order      []OrderFunc
-	unique     []string
+	fields     []string
 	predicates []predicate.Card
 	// eager-loading edges.
 	withOwner *UserQuery
@@ -256,13 +256,17 @@ func (cq *CardQuery) ExistX(ctx context.Context) bool {
 // Clone returns a duplicate of the query builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
 func (cq *CardQuery) Clone() *CardQuery {
+	if cq == nil {
+		return nil
+	}
 	return &CardQuery{
 		config:     cq.config,
 		limit:      cq.limit,
 		offset:     cq.offset,
 		order:      append([]OrderFunc{}, cq.order...),
-		unique:     append([]string{}, cq.unique...),
 		predicates: append([]predicate.Card{}, cq.predicates...),
+		withOwner:  cq.withOwner.Clone(),
+		withSpec:   cq.withSpec.Clone(),
 		// clone intermediate query.
 		gremlin: cq.gremlin.Clone(),
 		path:    cq.path,
@@ -331,15 +335,8 @@ func (cq *CardQuery) GroupBy(field string, fields ...string) *CardGroupBy {
 //		Scan(ctx, &v)
 //
 func (cq *CardQuery) Select(field string, fields ...string) *CardSelect {
-	selector := &CardSelect{config: cq.config}
-	selector.fields = append([]string{field}, fields...)
-	selector.path = func(ctx context.Context) (prev *dsl.Traversal, err error) {
-		if err := cq.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		return cq.gremlinQuery(), nil
-	}
-	return selector
+	cq.fields = append([]string{field}, fields...)
+	return &CardSelect{CardQuery: cq}
 }
 
 func (cq *CardQuery) prepareQuery(ctx context.Context) error {
@@ -355,7 +352,17 @@ func (cq *CardQuery) prepareQuery(ctx context.Context) error {
 
 func (cq *CardQuery) gremlinAll(ctx context.Context) ([]*Card, error) {
 	res := &gremlin.Response{}
-	query, bindings := cq.gremlinQuery().ValueMap(true).Query()
+	traversal := cq.gremlinQuery()
+	if len(cq.fields) > 0 {
+		fields := make([]interface{}, len(cq.fields))
+		for i, f := range cq.fields {
+			fields[i] = f
+		}
+		traversal.ValueMap(fields...)
+	} else {
+		traversal.ValueMap(true)
+	}
+	query, bindings := traversal.Query()
 	if err := cq.driver.Exec(ctx, query, bindings, res); err != nil {
 		return nil, err
 	}
@@ -407,9 +414,7 @@ func (cq *CardQuery) gremlinQuery() *dsl.Traversal {
 	case limit != nil:
 		v.Limit(*limit)
 	}
-	if unique := cq.unique; len(unique) == 0 {
-		v.Dedup()
-	}
+	v.Dedup()
 	return v
 }
 
@@ -673,20 +678,17 @@ func (cgb *CardGroupBy) gremlinQuery() *dsl.Traversal {
 
 // CardSelect is the builder for select fields of Card entities.
 type CardSelect struct {
-	config
-	fields []string
+	*CardQuery
 	// intermediate query (i.e. traversal path).
 	gremlin *dsl.Traversal
-	path    func(context.Context) (*dsl.Traversal, error)
 }
 
 // Scan applies the selector query and scan the result into the given value.
 func (cs *CardSelect) Scan(ctx context.Context, v interface{}) error {
-	query, err := cs.path(ctx)
-	if err != nil {
+	if err := cs.prepareQuery(ctx); err != nil {
 		return err
 	}
-	cs.gremlin = query
+	cs.gremlin = cs.CardQuery.gremlinQuery()
 	return cs.gremlinScan(ctx, v)
 }
 

@@ -32,6 +32,38 @@ var (
 			},
 		},
 	}
+	// ConversionsColumns holds the columns for the "conversions" table.
+	ConversionsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "name", Type: field.TypeString, Nullable: true},
+		{Name: "int8_to_string", Type: field.TypeString, Nullable: true, Size: 6},
+		{Name: "uint8_to_string", Type: field.TypeString, Nullable: true, Size: 6},
+		{Name: "int16_to_string", Type: field.TypeString, Nullable: true, Size: 6},
+		{Name: "uint16_to_string", Type: field.TypeString, Nullable: true, Size: 6},
+		{Name: "int32_to_string", Type: field.TypeString, Nullable: true, Size: 12},
+		{Name: "uint32_to_string", Type: field.TypeString, Nullable: true, Size: 12},
+		{Name: "int64_to_string", Type: field.TypeString, Nullable: true, Size: 21},
+		{Name: "uint64_to_string", Type: field.TypeString, Nullable: true, Size: 21},
+	}
+	// ConversionsTable holds the schema information for the "conversions" table.
+	ConversionsTable = &schema.Table{
+		Name:        "conversions",
+		Columns:     ConversionsColumns,
+		PrimaryKey:  []*schema.Column{ConversionsColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{},
+	}
+	// CustomTypesColumns holds the columns for the "custom_types" table.
+	CustomTypesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "custom", Type: field.TypeString, Nullable: true, SchemaType: map[string]string{"postgres": "customtype"}},
+	}
+	// CustomTypesTable holds the schema information for the "custom_types" table.
+	CustomTypesTable = &schema.Table{
+		Name:        "custom_types",
+		Columns:     CustomTypesColumns,
+		PrimaryKey:  []*schema.Column{CustomTypesColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{},
+	}
 	// GroupsColumns holds the columns for the "groups" table.
 	GroupsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
@@ -144,6 +176,8 @@ var (
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
 		CarsTable,
+		ConversionsTable,
+		CustomTypesTable,
 		GroupsTable,
 		MediaTable,
 		PetsTable,

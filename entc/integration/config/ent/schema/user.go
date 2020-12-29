@@ -4,16 +4,62 @@
 
 package schema
 
-import "github.com/facebook/ent"
+import (
+	"github.com/facebook/ent"
+	"github.com/facebook/ent/dialect/entsql"
+	"github.com/facebook/ent/schema"
+	"github.com/facebook/ent/schema/field"
+	"github.com/facebook/ent/schema/mixin"
+)
+
+var (
+	incrementalDisabled = false
+)
+
+type Mixin struct {
+	mixin.Schema
+}
+
+// Annotations of the Mixin schema.
+func (Mixin) Annotations() []schema.Annotation {
+	return []schema.Annotation{
+		entsql.Annotation{Charset: "utf8mb4"},
+	}
+}
 
 // User holds the schema definition for the User entity.
 type User struct {
 	ent.Schema
 }
 
-// Config of the User.
-func (User) Config() ent.Config {
-	return ent.Config{
-		Table: "Users",
+// Fields of the User schema.
+func (User) Fields() []ent.Field {
+	return []ent.Field{
+		field.Int("id").
+			StorageKey("user_id").
+			Annotations(entsql.Annotation{
+				Incremental: &incrementalDisabled,
+			}),
+		field.String("name").
+			Optional().
+			Annotations(entsql.Annotation{
+				Size: 128,
+			}),
+	}
+}
+
+// Mixin of the User schema.
+func (User) Mixin() []ent.Mixin {
+	return []ent.Mixin{
+		Mixin{},
+	}
+}
+
+// Annotations of the User schema.
+func (User) Annotations() []schema.Annotation {
+	return []schema.Annotation{
+		entsql.Annotation{
+			Table: "Users",
+		},
 	}
 }

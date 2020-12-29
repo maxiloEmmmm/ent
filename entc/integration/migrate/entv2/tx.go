@@ -18,6 +18,10 @@ type Tx struct {
 	config
 	// Car is the client for interacting with the Car builders.
 	Car *CarClient
+	// Conversion is the client for interacting with the Conversion builders.
+	Conversion *ConversionClient
+	// CustomType is the client for interacting with the CustomType builders.
+	CustomType *CustomTypeClient
 	// Group is the client for interacting with the Group builders.
 	Group *GroupClient
 	// Media is the client for interacting with the Media builders.
@@ -162,6 +166,8 @@ func (tx *Tx) Client() *Client {
 
 func (tx *Tx) init() {
 	tx.Car = NewCarClient(tx.config)
+	tx.Conversion = NewConversionClient(tx.config)
+	tx.CustomType = NewCustomTypeClient(tx.config)
 	tx.Group = NewGroupClient(tx.config)
 	tx.Media = NewMediaClient(tx.config)
 	tx.Pet = NewPetClient(tx.config)

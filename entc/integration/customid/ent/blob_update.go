@@ -103,7 +103,7 @@ func (bu *BlobUpdate) RemoveLinks(b ...*Blob) *BlobUpdate {
 	return bu.RemoveLinkIDs(ids...)
 }
 
-// Save executes the query and returns the number of rows/vertices matched by this operation.
+// Save executes the query and returns the number of nodes affected by the update operation.
 func (bu *BlobUpdate) Save(ctx context.Context) (int, error) {
 	var (
 		err      error
@@ -523,7 +523,7 @@ func (buo *BlobUpdateOne) sqlSave(ctx context.Context) (_node *Blob, err error) 
 	}
 	_node = &Blob{config: buo.config}
 	_spec.Assign = _node.assignValues
-	_spec.ScanValues = _node.scanValues()
+	_spec.ScanValues = _node.scanValues
 	if err = sqlgraph.UpdateNode(ctx, buo.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
 			err = &NotFoundError{blob.Label}

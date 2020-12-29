@@ -19,7 +19,7 @@ import (
 	"github.com/facebook/ent/entc/gen/internal"
 )
 
-//go:generate go run github.com/go-bindata/go-bindata/go-bindata -o=internal/bindata.go -pkg=internal -modtime=1 ./template/...
+//go:generate go run github.com/go-bindata/go-bindata/go-bindata -o=internal/bindata.go -pkg=internal -mode=420 -modtime=1 ./template/...
 
 type (
 	// TypeTemplate specifies a template that is executed with
@@ -151,6 +151,13 @@ var (
 		{
 			Name:   "runtime/pkg",
 			Format: "runtime/runtime.go",
+		},
+		{
+			Name:   "internal/schema",
+			Format: "internal/schema.go",
+			Skip: func(g *Graph) bool {
+				return !g.featureEnabled(FeatureSnapshot)
+			},
 		},
 	}
 	// templates holds the Go templates for the code generation.

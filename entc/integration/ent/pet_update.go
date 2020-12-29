@@ -16,6 +16,7 @@ import (
 	"github.com/facebook/ent/entc/integration/ent/predicate"
 	"github.com/facebook/ent/entc/integration/ent/user"
 	"github.com/facebook/ent/schema/field"
+	"github.com/google/uuid"
 )
 
 // PetUpdate is the builder for updating Pet entities.
@@ -34,6 +35,18 @@ func (pu *PetUpdate) Where(ps ...predicate.Pet) *PetUpdate {
 // SetName sets the name field.
 func (pu *PetUpdate) SetName(s string) *PetUpdate {
 	pu.mutation.SetName(s)
+	return pu
+}
+
+// SetUUID sets the uuid field.
+func (pu *PetUpdate) SetUUID(u uuid.UUID) *PetUpdate {
+	pu.mutation.SetUUID(u)
+	return pu
+}
+
+// ClearUUID clears the value of uuid.
+func (pu *PetUpdate) ClearUUID() *PetUpdate {
+	pu.mutation.ClearUUID()
 	return pu
 }
 
@@ -92,7 +105,7 @@ func (pu *PetUpdate) ClearOwner() *PetUpdate {
 	return pu
 }
 
-// Save executes the query and returns the number of rows/vertices matched by this operation.
+// Save executes the query and returns the number of nodes affected by the update operation.
 func (pu *PetUpdate) Save(ctx context.Context) (int, error) {
 	var (
 		err      error
@@ -166,6 +179,19 @@ func (pu *PetUpdate) sqlSave(ctx context.Context) (n int, err error) {
 			Type:   field.TypeString,
 			Value:  value,
 			Column: pet.FieldName,
+		})
+	}
+	if value, ok := pu.mutation.UUID(); ok {
+		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
+			Type:   field.TypeUUID,
+			Value:  value,
+			Column: pet.FieldUUID,
+		})
+	}
+	if pu.mutation.UUIDCleared() {
+		_spec.Fields.Clear = append(_spec.Fields.Clear, &sqlgraph.FieldSpec{
+			Type:   field.TypeUUID,
+			Column: pet.FieldUUID,
 		})
 	}
 	if pu.mutation.TeamCleared() {
@@ -259,6 +285,18 @@ type PetUpdateOne struct {
 // SetName sets the name field.
 func (puo *PetUpdateOne) SetName(s string) *PetUpdateOne {
 	puo.mutation.SetName(s)
+	return puo
+}
+
+// SetUUID sets the uuid field.
+func (puo *PetUpdateOne) SetUUID(u uuid.UUID) *PetUpdateOne {
+	puo.mutation.SetUUID(u)
+	return puo
+}
+
+// ClearUUID clears the value of uuid.
+func (puo *PetUpdateOne) ClearUUID() *PetUpdateOne {
+	puo.mutation.ClearUUID()
 	return puo
 }
 
@@ -391,6 +429,19 @@ func (puo *PetUpdateOne) sqlSave(ctx context.Context) (_node *Pet, err error) {
 			Column: pet.FieldName,
 		})
 	}
+	if value, ok := puo.mutation.UUID(); ok {
+		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
+			Type:   field.TypeUUID,
+			Value:  value,
+			Column: pet.FieldUUID,
+		})
+	}
+	if puo.mutation.UUIDCleared() {
+		_spec.Fields.Clear = append(_spec.Fields.Clear, &sqlgraph.FieldSpec{
+			Type:   field.TypeUUID,
+			Column: pet.FieldUUID,
+		})
+	}
 	if puo.mutation.TeamCleared() {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.O2O,
@@ -463,7 +514,7 @@ func (puo *PetUpdateOne) sqlSave(ctx context.Context) (_node *Pet, err error) {
 	}
 	_node = &Pet{config: puo.config}
 	_spec.Assign = _node.assignValues
-	_spec.ScanValues = _node.scanValues()
+	_spec.ScanValues = _node.scanValues
 	if err = sqlgraph.UpdateNode(ctx, puo.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
 			err = &NotFoundError{pet.Label}

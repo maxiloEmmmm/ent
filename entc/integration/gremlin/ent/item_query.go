@@ -26,7 +26,7 @@ type ItemQuery struct {
 	limit      *int
 	offset     *int
 	order      []OrderFunc
-	unique     []string
+	fields     []string
 	predicates []predicate.Item
 	// intermediate query (i.e. traversal path).
 	gremlin *dsl.Traversal
@@ -223,12 +223,14 @@ func (iq *ItemQuery) ExistX(ctx context.Context) bool {
 // Clone returns a duplicate of the query builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
 func (iq *ItemQuery) Clone() *ItemQuery {
+	if iq == nil {
+		return nil
+	}
 	return &ItemQuery{
 		config:     iq.config,
 		limit:      iq.limit,
 		offset:     iq.offset,
 		order:      append([]OrderFunc{}, iq.order...),
-		unique:     append([]string{}, iq.unique...),
 		predicates: append([]predicate.Item{}, iq.predicates...),
 		// clone intermediate query.
 		gremlin: iq.gremlin.Clone(),
@@ -252,15 +254,8 @@ func (iq *ItemQuery) GroupBy(field string, fields ...string) *ItemGroupBy {
 
 // Select one or more fields from the given query.
 func (iq *ItemQuery) Select(field string, fields ...string) *ItemSelect {
-	selector := &ItemSelect{config: iq.config}
-	selector.fields = append([]string{field}, fields...)
-	selector.path = func(ctx context.Context) (prev *dsl.Traversal, err error) {
-		if err := iq.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		return iq.gremlinQuery(), nil
-	}
-	return selector
+	iq.fields = append([]string{field}, fields...)
+	return &ItemSelect{ItemQuery: iq}
 }
 
 func (iq *ItemQuery) prepareQuery(ctx context.Context) error {
@@ -276,7 +271,17 @@ func (iq *ItemQuery) prepareQuery(ctx context.Context) error {
 
 func (iq *ItemQuery) gremlinAll(ctx context.Context) ([]*Item, error) {
 	res := &gremlin.Response{}
-	query, bindings := iq.gremlinQuery().ValueMap(true).Query()
+	traversal := iq.gremlinQuery()
+	if len(iq.fields) > 0 {
+		fields := make([]interface{}, len(iq.fields))
+		for i, f := range iq.fields {
+			fields[i] = f
+		}
+		traversal.ValueMap(fields...)
+	} else {
+		traversal.ValueMap(true)
+	}
+	query, bindings := traversal.Query()
 	if err := iq.driver.Exec(ctx, query, bindings, res); err != nil {
 		return nil, err
 	}
@@ -328,9 +333,7 @@ func (iq *ItemQuery) gremlinQuery() *dsl.Traversal {
 	case limit != nil:
 		v.Limit(*limit)
 	}
-	if unique := iq.unique; len(unique) == 0 {
-		v.Dedup()
-	}
+	v.Dedup()
 	return v
 }
 
@@ -594,20 +597,17 @@ func (igb *ItemGroupBy) gremlinQuery() *dsl.Traversal {
 
 // ItemSelect is the builder for select fields of Item entities.
 type ItemSelect struct {
-	config
-	fields []string
+	*ItemQuery
 	// intermediate query (i.e. traversal path).
 	gremlin *dsl.Traversal
-	path    func(context.Context) (*dsl.Traversal, error)
 }
 
 // Scan applies the selector query and scan the result into the given value.
 func (is *ItemSelect) Scan(ctx context.Context, v interface{}) error {
-	query, err := is.path(ctx)
-	if err != nil {
+	if err := is.prepareQuery(ctx); err != nil {
 		return err
 	}
-	is.gremlin = query
+	is.gremlin = is.ItemQuery.gremlinQuery()
 	return is.gremlinScan(ctx, v)
 }
 

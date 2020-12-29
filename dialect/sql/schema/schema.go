@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/facebook/ent/dialect/entsql"
 	"github.com/facebook/ent/dialect/sql"
 	"github.com/facebook/ent/schema/field"
 )
@@ -33,6 +34,7 @@ type Table struct {
 	Indexes     []*Index
 	PrimaryKey  []*Column
 	ForeignKeys []*ForeignKey
+	Annotation  *entsql.Annotation
 }
 
 // NewTable returns a new table with the given name.
@@ -45,7 +47,8 @@ func NewTable(name string) *Table {
 
 // AddPrimary adds a new primary key to the table.
 func (t *Table) AddPrimary(c *Column) *Table {
-	t.Columns = append(t.Columns, c)
+	c.Key = PrimaryKey
+	t.AddColumn(c)
 	t.PrimaryKey = append(t.PrimaryKey, c)
 	return t
 }
@@ -60,6 +63,12 @@ func (t *Table) AddForeignKey(fk *ForeignKey) *Table {
 func (t *Table) AddColumn(c *Column) *Table {
 	t.columns[c.Name] = c
 	t.Columns = append(t.Columns, c)
+	return t
+}
+
+// SetAnnotation the entsql.Annotation on the table.
+func (t *Table) SetAnnotation(ant *entsql.Annotation) *Table {
+	t.Annotation = ant
 	return t
 }
 
@@ -178,6 +187,8 @@ func (c *Column) ConvertibleTo(d *Column) bool {
 	case c.Type == field.TypeString && d.Type == field.TypeEnum ||
 		c.Type == field.TypeEnum && d.Type == field.TypeString:
 		return true
+	case c.Type.Integer() && d.Type == field.TypeString:
+		return true
 	}
 	return c.FloatType() && d.FloatType()
 }
@@ -249,7 +260,7 @@ func (c *Column) defaultValue(b *sql.ColumnBuilder) {
 			attr += strconv.FormatBool(v)
 		case string:
 			// Escape single quote by replacing each with 2.
-			attr += fmt.Sprintf("'%s'", strings.Replace(v, "'", "''", -1))
+			attr += fmt.Sprintf("'%s'", strings.ReplaceAll(v, "'", "''"))
 		default:
 			attr += fmt.Sprint(v)
 		}
@@ -361,7 +372,7 @@ func (r ReferenceOption) ConstName() string {
 	if r == NoAction {
 		return ""
 	}
-	return strings.Replace(strings.Title(strings.ToLower(string(r))), " ", "", -1)
+	return strings.ReplaceAll(strings.Title(strings.ToLower(string(r))), " ", "")
 }
 
 // Index definition for table index.

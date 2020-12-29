@@ -6,6 +6,7 @@ package gen
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"go/token"
 	"go/types"
@@ -17,6 +18,7 @@ import (
 	"unicode"
 
 	"github.com/facebook/ent"
+	"github.com/facebook/ent/dialect/entsql"
 	"github.com/facebook/ent/dialect/sql/schema"
 	"github.com/facebook/ent/entc/load"
 	"github.com/facebook/ent/schema/field"
@@ -170,7 +172,10 @@ func NewType(c *Config, schema *load.Schema) (*Type, error) {
 	typ := &Type{
 		Config: c,
 		ID: &Field{
-			Name:      "id",
+			Name: "id",
+			def: &load.Field{
+				Name: "id",
+			},
 			Type:      idType,
 			StructTag: structTag("id", ""),
 		},
@@ -222,10 +227,18 @@ func (t Type) Label() string {
 
 // Table returns SQL table name of the node/type.
 func (t Type) Table() string {
+	if ant := t.EntSQL(); ant != nil && ant.Table != "" {
+		return ant.Table
+	}
 	if t.schema != nil && t.schema.Config.Table != "" {
 		return t.schema.Config.Table
 	}
 	return snake(rules.Pluralize(t.Name))
+}
+
+// EntSQL returns the EntSQL annotation if exists.
+func (t Type) EntSQL() *entsql.Annotation {
+	return entsqlAnnotate(t.Annotations)
 }
 
 // Package returns the package name of this node.
@@ -473,9 +486,15 @@ func (t *Type) AddIndex(idx *load.Index) error {
 		return fmt.Errorf("missing fields or edges")
 	}
 	for _, name := range idx.Fields {
-		f, ok := t.fields[name]
-		if !ok {
-			return fmt.Errorf("unknown index field %q", name)
+		var f *Field
+		if name == t.ID.Name {
+			f = t.ID
+		} else {
+			var ok bool
+			f, ok = t.fields[name]
+			if !ok {
+				return fmt.Errorf("unknown index field %q", name)
+			}
 		}
 		if f.def.Size != nil && *f.def.Size > schema.DefaultStringLen {
 			return fmt.Errorf("field %q exceeds the index size limit (%d)", name, schema.DefaultStringLen)
@@ -528,7 +547,7 @@ func (t *Type) resolveFKs() error {
 		fk := &ForeignKey{
 			Edge: e,
 			Field: &Field{
-				Name:        e.Rel.Column(),
+				Name:        builderField(e.Rel.Column()),
 				Type:        refid.Type,
 				Nillable:    true,
 				Optional:    true,
@@ -569,7 +588,7 @@ func (t Type) CreateName() string {
 	return pascal(t.Name) + "Create"
 }
 
-// CreateBulk returns the struct name denoting the create-bulk-builder for this type.
+// CreateBulkName returns the struct name denoting the create-bulk-builder for this type.
 func (t Type) CreateBulkName() string {
 	return pascal(t.Name) + "CreateBulk"
 }
@@ -631,7 +650,7 @@ func (t Type) HookPositions() []*load.Position {
 	return nil
 }
 
-// NumHooks returns the number of privacy-policy declared in the type schema.
+// NumPolicy returns the number of privacy-policy declared in the type schema.
 func (t Type) NumPolicy() int {
 	if t.schema != nil {
 		return len(t.schema.Policy)
@@ -697,7 +716,7 @@ func (t *Type) checkField(tf *Field, f *load.Field) (err error) {
 			f.Info.Ident = fmt.Sprintf("%s.%s", t.Package(), pascal(f.Name))
 		}
 	case tf.Validators > 0 && !tf.ConvertedToBasic():
-		err = fmt.Errorf("GoType %q for field %q must be converted to basic Go type for validators", tf.Type, f.Name)
+		err = fmt.Errorf("GoType %q for field %q must be converted to the basic %q type for validators", tf.Type, f.Name, tf.Type.Type)
 	}
 	return err
 }
@@ -726,7 +745,7 @@ func (f Field) StructField() string {
 	return pascal(f.Name)
 }
 
-// Enums returns the enum values of a field.
+// EnumNames returns the enum values of a field.
 func (f Field) EnumNames() []string {
 	names := make([]string, 0, len(f.def.Enums))
 	for _, e := range f.Enums {
@@ -753,7 +772,14 @@ func (f Field) EnumName(enum string) string {
 }
 
 // Validator returns the validator name.
-func (f Field) Validator() string { return pascal(f.Name) + "Validator" }
+func (f Field) Validator() string {
+	return pascal(f.Name) + "Validator"
+}
+
+// EntSQL returns the EntSQL annotation if exists.
+func (f Field) EntSQL() *entsql.Annotation {
+	return entsqlAnnotate(f.Annotations)
+}
 
 // mutMethods returns the method names of mutation interface.
 var mutMethods = func() map[string]struct{} {
@@ -866,7 +892,8 @@ func (f Field) NullTypeField(rec string) string {
 	return expr
 }
 
-// Column returns the table column. It sets it as a primary key (auto_increment) in case of ID field.
+// Column returns the table column. It sets it as a primary key (auto_increment) in case of ID field, unless stated
+// otherwise.
 func (f Field) Column() *schema.Column {
 	c := &schema.Column{
 		Name:     f.StorageKey(),
@@ -890,8 +917,20 @@ func (f Field) Column() *schema.Column {
 	return c
 }
 
+// incremental returns if the column has an incremental behavior.
+// If no value is defined externally, we use a provided def flag
+func (f Field) incremental(def bool) bool {
+	if ant := f.EntSQL(); ant != nil && ant.Incremental != nil {
+		return *ant.Incremental
+	}
+	return def
+}
+
 // size returns the the field size defined in the schema.
 func (f Field) size() int64 {
+	if ant := f.EntSQL(); ant != nil && ant.Size != 0 {
+		return ant.Size
+	}
 	if f.def != nil && f.def.Size != nil {
 		return *f.def.Size
 	}
@@ -902,9 +941,9 @@ func (f Field) size() int64 {
 func (f Field) PK() *schema.Column {
 	c := &schema.Column{
 		Name:      f.StorageKey(),
-		Type:      field.TypeInt,
+		Type:      f.Type.Type,
 		Key:       schema.PrimaryKey,
-		Increment: true,
+		Increment: f.incremental(true),
 	}
 	// If the PK was defined by the user and it's UUID or string.
 	if f.UserDefined && !f.Type.Numeric() {
@@ -1063,7 +1102,7 @@ func (e Edge) O2O() bool { return e.Rel.Type == O2O }
 // IsInverse returns if this edge is an inverse edge.
 func (e Edge) IsInverse() bool { return e.Inverse != "" }
 
-// Constant returns the constant name of the edge for the gremlin dialect.
+// LabelConstant returns the constant name of the edge for the gremlin dialect.
 // If the edge is inverse, it returns the constant name of the owner-edge (assoc-edge).
 func (e Edge) LabelConstant() string {
 	name := e.Name
@@ -1073,7 +1112,7 @@ func (e Edge) LabelConstant() string {
 	return pascal(name) + "Label"
 }
 
-// InverseConstant returns the inverse constant name of the edge.
+// InverseLabelConstant returns the inverse constant name of the edge.
 func (e Edge) InverseLabelConstant() string { return pascal(e.Name) + "InverseLabel" }
 
 // TableConstant returns the constant name of the relation table.
@@ -1100,6 +1139,11 @@ func (e Edge) BuilderField() string {
 	return builderField(e.Name)
 }
 
+// EagerLoadField returns the struct field (of query builder) for storing the eager-loading info.
+func (e Edge) EagerLoadField() string {
+	return "with" + pascal(e.Name)
+}
+
 // StructField returns the struct member of the edge in the model.
 func (e Edge) StructField() string {
 	return pascal(e.Name)
@@ -1108,7 +1152,7 @@ func (e Edge) StructField() string {
 // StructFKField returns the struct member for holding the edge
 // foreign-key in the model.
 func (e Edge) StructFKField() string {
-	return e.Rel.Column()
+	return builderField(e.Rel.Column())
 }
 
 // OwnFK indicates if the foreign-key of this edge is owned by the edge
@@ -1121,6 +1165,16 @@ func (e Edge) OwnFK() bool {
 		return true
 	}
 	return false
+}
+
+// MutationSet returns the method name for setting the edge id.
+func (e Edge) MutationSet() string {
+	return "Set" + pascal(e.Name) + "ID"
+}
+
+// MutationAdd returns the method name for adding edge ids.
+func (e Edge) MutationAdd() string {
+	return "Add" + pascal(rules.Singularize(e.Name)) + "IDs"
 }
 
 // MutationReset returns the method name for resetting the edge value.
@@ -1248,12 +1302,25 @@ func builderField(name string) string {
 	return name
 }
 
+// entsqlAnnotate extracts the entsql annotation from a loaded annotation format.
+func entsqlAnnotate(annotation map[string]interface{}) *entsql.Annotation {
+	annotate := &entsql.Annotation{}
+	if annotation == nil || annotation[annotate.Name()] == nil {
+		return nil
+	}
+	if buf, err := json.Marshal(annotation[annotate.Name()]); err == nil {
+		_ = json.Unmarshal(buf, &annotate)
+	}
+	return annotate
+}
+
 var (
 	// global identifiers used by the generated package.
 	globalIdent = names(
 		"AggregateFunc",
 		"As",
 		"Asc",
+		"Client",
 		"Count",
 		"Debug",
 		"Desc",
@@ -1289,6 +1356,7 @@ var (
 		"predicates",
 		"typ",
 		"unique",
+		"withFKs",
 	)
 )
 

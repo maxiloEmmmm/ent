@@ -26,7 +26,7 @@ type CarQuery struct {
 	limit      *int
 	offset     *int
 	order      []OrderFunc
-	unique     []string
+	fields     []string
 	predicates []predicate.Car
 	// eager-loading edges.
 	withOwner *PetQuery
@@ -248,13 +248,16 @@ func (cq *CarQuery) ExistX(ctx context.Context) bool {
 // Clone returns a duplicate of the query builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
 func (cq *CarQuery) Clone() *CarQuery {
+	if cq == nil {
+		return nil
+	}
 	return &CarQuery{
 		config:     cq.config,
 		limit:      cq.limit,
 		offset:     cq.offset,
 		order:      append([]OrderFunc{}, cq.order...),
-		unique:     append([]string{}, cq.unique...),
 		predicates: append([]predicate.Car{}, cq.predicates...),
+		withOwner:  cq.withOwner.Clone(),
 		// clone intermediate query.
 		sql:  cq.sql.Clone(),
 		path: cq.path,
@@ -312,18 +315,16 @@ func (cq *CarQuery) GroupBy(field string, fields ...string) *CarGroupBy {
 //		Scan(ctx, &v)
 //
 func (cq *CarQuery) Select(field string, fields ...string) *CarSelect {
-	selector := &CarSelect{config: cq.config}
-	selector.fields = append([]string{field}, fields...)
-	selector.path = func(ctx context.Context) (prev *sql.Selector, err error) {
-		if err := cq.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		return cq.sqlQuery(), nil
-	}
-	return selector
+	cq.fields = append([]string{field}, fields...)
+	return &CarSelect{CarQuery: cq}
 }
 
 func (cq *CarQuery) prepareQuery(ctx context.Context) error {
+	for _, f := range cq.fields {
+		if !car.ValidColumn(f) {
+			return &ValidationError{Name: f, err: fmt.Errorf("ent: invalid field %q for query", f)}
+		}
+	}
 	if cq.path != nil {
 		prev, err := cq.path(ctx)
 		if err != nil {
@@ -349,22 +350,18 @@ func (cq *CarQuery) sqlAll(ctx context.Context) ([]*Car, error) {
 	if withFKs {
 		_spec.Node.Columns = append(_spec.Node.Columns, car.ForeignKeys...)
 	}
-	_spec.ScanValues = func() []interface{} {
+	_spec.ScanValues = func(columns []string) ([]interface{}, error) {
 		node := &Car{config: cq.config}
 		nodes = append(nodes, node)
-		values := node.scanValues()
-		if withFKs {
-			values = append(values, node.fkValues()...)
-		}
-		return values
+		return node.scanValues(columns)
 	}
-	_spec.Assign = func(values ...interface{}) error {
+	_spec.Assign = func(columns []string, values []interface{}) error {
 		if len(nodes) == 0 {
 			return fmt.Errorf("ent: Assign called without calling ScanValues")
 		}
 		node := nodes[len(nodes)-1]
 		node.Edges.loadedTypes = loadedTypes
-		return node.assignValues(values...)
+		return node.assignValues(columns, values)
 	}
 	if err := sqlgraph.QueryNodes(ctx, cq.driver, _spec); err != nil {
 		return nil, err
@@ -426,6 +423,9 @@ func (cq *CarQuery) querySpec() *sqlgraph.QuerySpec {
 		},
 		From:   cq.sql,
 		Unique: true,
+	}
+	if fields := cq.fields; len(fields) > 0 {
+		_spec.Node.Columns = fields
 	}
 	if ps := cq.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -727,20 +727,17 @@ func (cgb *CarGroupBy) sqlQuery() *sql.Selector {
 
 // CarSelect is the builder for select fields of Car entities.
 type CarSelect struct {
-	config
-	fields []string
+	*CarQuery
 	// intermediate query (i.e. traversal path).
-	sql  *sql.Selector
-	path func(context.Context) (*sql.Selector, error)
+	sql *sql.Selector
 }
 
 // Scan applies the selector query and scan the result into the given value.
 func (cs *CarSelect) Scan(ctx context.Context, v interface{}) error {
-	query, err := cs.path(ctx)
-	if err != nil {
+	if err := cs.prepareQuery(ctx); err != nil {
 		return err
 	}
-	cs.sql = query
+	cs.sql = cs.CarQuery.sqlQuery()
 	return cs.sqlScan(ctx, v)
 }
 
@@ -940,11 +937,6 @@ func (cs *CarSelect) BoolX(ctx context.Context) bool {
 }
 
 func (cs *CarSelect) sqlScan(ctx context.Context, v interface{}) error {
-	for _, f := range cs.fields {
-		if !car.ValidColumn(f) {
-			return &ValidationError{Name: f, err: fmt.Errorf("invalid field %q for selection", f)}
-		}
-	}
 	rows := &sql.Rows{}
 	query, args := cs.sqlQuery().Query()
 	if err := cs.driver.Query(ctx, query, args, rows); err != nil {

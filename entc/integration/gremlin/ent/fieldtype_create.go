@@ -21,6 +21,7 @@ import (
 	"github.com/facebook/ent/entc/integration/ent/role"
 	"github.com/facebook/ent/entc/integration/ent/schema"
 	"github.com/facebook/ent/entc/integration/gremlin/ent/fieldtype"
+	"github.com/google/uuid"
 )
 
 // FieldTypeCreate is the builder for creating a FieldType entity.
@@ -548,6 +549,18 @@ func (ftc *FieldTypeCreate) SetNillableRole(r *role.Role) *FieldTypeCreate {
 	return ftc
 }
 
+// SetMAC sets the mac field.
+func (ftc *FieldTypeCreate) SetMAC(s schema.MAC) *FieldTypeCreate {
+	ftc.mutation.SetMAC(s)
+	return ftc
+}
+
+// SetUUID sets the uuid field.
+func (ftc *FieldTypeCreate) SetUUID(u uuid.UUID) *FieldTypeCreate {
+	ftc.mutation.SetUUID(u)
+	return ftc
+}
+
 // Mutation returns the FieldTypeMutation object of the builder.
 func (ftc *FieldTypeCreate) Mutation() *FieldTypeMutation {
 	return ftc.mutation
@@ -649,6 +662,11 @@ func (ftc *FieldTypeCreate) check() error {
 	if v, ok := ftc.mutation.Role(); ok {
 		if err := fieldtype.RoleValidator(v); err != nil {
 			return &ValidationError{Name: "role", err: fmt.Errorf("ent: validator failed for field \"role\": %w", err)}
+		}
+	}
+	if v, ok := ftc.mutation.MAC(); ok {
+		if err := fieldtype.MACValidator(v.String()); err != nil {
+			return &ValidationError{Name: "mac", err: fmt.Errorf("ent: validator failed for field \"mac\": %w", err)}
 		}
 	}
 	return nil
@@ -806,6 +824,12 @@ func (ftc *FieldTypeCreate) gremlin() *dsl.Traversal {
 	}
 	if value, ok := ftc.mutation.Role(); ok {
 		v.Property(dsl.Single, fieldtype.FieldRole, value)
+	}
+	if value, ok := ftc.mutation.MAC(); ok {
+		v.Property(dsl.Single, fieldtype.FieldMAC, value)
+	}
+	if value, ok := ftc.mutation.UUID(); ok {
+		v.Property(dsl.Single, fieldtype.FieldUUID, value)
 	}
 	return v.ValueMap(true)
 }

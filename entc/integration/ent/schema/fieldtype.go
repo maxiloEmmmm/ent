@@ -16,6 +16,8 @@ import (
 	"github.com/facebook/ent/dialect/sql"
 	"github.com/facebook/ent/entc/integration/ent/role"
 	"github.com/facebook/ent/schema/field"
+
+	"github.com/google/uuid"
 )
 
 // FieldType holds the schema definition for the FieldType entity.
@@ -130,6 +132,18 @@ func (FieldType) Fields() []ent.Field {
 		field.Enum("role").
 			Default(string(role.Read)).
 			GoType(role.Role("role")),
+		field.String("mac").
+			Optional().
+			GoType(&MAC{}).
+			SchemaType(map[string]string{
+				dialect.Postgres: "macaddr",
+			}).
+			Validate(func(s string) error {
+				_, err := net.ParseMAC(s)
+				return err
+			}),
+		field.UUID("uuid", uuid.UUID{}).
+			Optional(),
 	}
 }
 
@@ -155,7 +169,7 @@ func (l *Link) Scan(value interface{}) (err error) {
 	case string:
 		l.URL, err = url.Parse(v)
 	default:
-		err = fmt.Errorf("unexpcted type %T", v)
+		err = fmt.Errorf("unexpected type %T", v)
 	}
 	return
 }
@@ -166,4 +180,27 @@ func (l Link) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return l.String(), nil
+}
+
+type MAC struct {
+	net.HardwareAddr
+}
+
+// Scan implements the Scanner interface.
+func (m *MAC) Scan(value interface{}) (err error) {
+	switch v := value.(type) {
+	case nil:
+	case []byte:
+		m.HardwareAddr, err = net.ParseMAC(string(v))
+	case string:
+		m.HardwareAddr, err = net.ParseMAC(v)
+	default:
+		err = fmt.Errorf("unexpected type %T", v)
+	}
+	return
+}
+
+// Value implements the driver Valuer interface.
+func (m MAC) Value() (driver.Value, error) {
+	return m.HardwareAddr.String(), nil
 }

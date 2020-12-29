@@ -27,7 +27,7 @@ type SpecQuery struct {
 	limit      *int
 	offset     *int
 	order      []OrderFunc
-	unique     []string
+	fields     []string
 	predicates []predicate.Spec
 	// eager-loading edges.
 	withCard *CardQuery
@@ -248,13 +248,16 @@ func (sq *SpecQuery) ExistX(ctx context.Context) bool {
 // Clone returns a duplicate of the query builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
 func (sq *SpecQuery) Clone() *SpecQuery {
+	if sq == nil {
+		return nil
+	}
 	return &SpecQuery{
 		config:     sq.config,
 		limit:      sq.limit,
 		offset:     sq.offset,
 		order:      append([]OrderFunc{}, sq.order...),
-		unique:     append([]string{}, sq.unique...),
 		predicates: append([]predicate.Spec{}, sq.predicates...),
+		withCard:   sq.withCard.Clone(),
 		// clone intermediate query.
 		sql:  sq.sql.Clone(),
 		path: sq.path,
@@ -288,18 +291,16 @@ func (sq *SpecQuery) GroupBy(field string, fields ...string) *SpecGroupBy {
 
 // Select one or more fields from the given query.
 func (sq *SpecQuery) Select(field string, fields ...string) *SpecSelect {
-	selector := &SpecSelect{config: sq.config}
-	selector.fields = append([]string{field}, fields...)
-	selector.path = func(ctx context.Context) (prev *sql.Selector, err error) {
-		if err := sq.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		return sq.sqlQuery(), nil
-	}
-	return selector
+	sq.fields = append([]string{field}, fields...)
+	return &SpecSelect{SpecQuery: sq}
 }
 
 func (sq *SpecQuery) prepareQuery(ctx context.Context) error {
+	for _, f := range sq.fields {
+		if !spec.ValidColumn(f) {
+			return &ValidationError{Name: f, err: fmt.Errorf("ent: invalid field %q for query", f)}
+		}
+	}
 	if sq.path != nil {
 		prev, err := sq.path(ctx)
 		if err != nil {
@@ -318,19 +319,18 @@ func (sq *SpecQuery) sqlAll(ctx context.Context) ([]*Spec, error) {
 			sq.withCard != nil,
 		}
 	)
-	_spec.ScanValues = func() []interface{} {
+	_spec.ScanValues = func(columns []string) ([]interface{}, error) {
 		node := &Spec{config: sq.config}
 		nodes = append(nodes, node)
-		values := node.scanValues()
-		return values
+		return node.scanValues(columns)
 	}
-	_spec.Assign = func(values ...interface{}) error {
+	_spec.Assign = func(columns []string, values []interface{}) error {
 		if len(nodes) == 0 {
 			return fmt.Errorf("ent: Assign called without calling ScanValues")
 		}
 		node := nodes[len(nodes)-1]
 		node.Edges.loadedTypes = loadedTypes
-		return node.assignValues(values...)
+		return node.assignValues(columns, values)
 	}
 	if err := sqlgraph.QueryNodes(ctx, sq.driver, _spec); err != nil {
 		return nil, err
@@ -431,6 +431,9 @@ func (sq *SpecQuery) querySpec() *sqlgraph.QuerySpec {
 		},
 		From:   sq.sql,
 		Unique: true,
+	}
+	if fields := sq.fields; len(fields) > 0 {
+		_spec.Node.Columns = fields
 	}
 	if ps := sq.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -732,20 +735,17 @@ func (sgb *SpecGroupBy) sqlQuery() *sql.Selector {
 
 // SpecSelect is the builder for select fields of Spec entities.
 type SpecSelect struct {
-	config
-	fields []string
+	*SpecQuery
 	// intermediate query (i.e. traversal path).
-	sql  *sql.Selector
-	path func(context.Context) (*sql.Selector, error)
+	sql *sql.Selector
 }
 
 // Scan applies the selector query and scan the result into the given value.
 func (ss *SpecSelect) Scan(ctx context.Context, v interface{}) error {
-	query, err := ss.path(ctx)
-	if err != nil {
+	if err := ss.prepareQuery(ctx); err != nil {
 		return err
 	}
-	ss.sql = query
+	ss.sql = ss.SpecQuery.sqlQuery()
 	return ss.sqlScan(ctx, v)
 }
 
@@ -945,11 +945,6 @@ func (ss *SpecSelect) BoolX(ctx context.Context) bool {
 }
 
 func (ss *SpecSelect) sqlScan(ctx context.Context, v interface{}) error {
-	for _, f := range ss.fields {
-		if !spec.ValidColumn(f) {
-			return &ValidationError{Name: f, err: fmt.Errorf("invalid field %q for selection", f)}
-		}
-	}
 	rows := &sql.Rows{}
 	query, args := ss.sqlQuery().Query()
 	if err := ss.driver.Query(ctx, query, args, rows); err != nil {

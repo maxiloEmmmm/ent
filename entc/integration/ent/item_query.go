@@ -25,7 +25,7 @@ type ItemQuery struct {
 	limit      *int
 	offset     *int
 	order      []OrderFunc
-	unique     []string
+	fields     []string
 	predicates []predicate.Item
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
@@ -222,12 +222,14 @@ func (iq *ItemQuery) ExistX(ctx context.Context) bool {
 // Clone returns a duplicate of the query builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
 func (iq *ItemQuery) Clone() *ItemQuery {
+	if iq == nil {
+		return nil
+	}
 	return &ItemQuery{
 		config:     iq.config,
 		limit:      iq.limit,
 		offset:     iq.offset,
 		order:      append([]OrderFunc{}, iq.order...),
-		unique:     append([]string{}, iq.unique...),
 		predicates: append([]predicate.Item{}, iq.predicates...),
 		// clone intermediate query.
 		sql:  iq.sql.Clone(),
@@ -251,18 +253,16 @@ func (iq *ItemQuery) GroupBy(field string, fields ...string) *ItemGroupBy {
 
 // Select one or more fields from the given query.
 func (iq *ItemQuery) Select(field string, fields ...string) *ItemSelect {
-	selector := &ItemSelect{config: iq.config}
-	selector.fields = append([]string{field}, fields...)
-	selector.path = func(ctx context.Context) (prev *sql.Selector, err error) {
-		if err := iq.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		return iq.sqlQuery(), nil
-	}
-	return selector
+	iq.fields = append([]string{field}, fields...)
+	return &ItemSelect{ItemQuery: iq}
 }
 
 func (iq *ItemQuery) prepareQuery(ctx context.Context) error {
+	for _, f := range iq.fields {
+		if !item.ValidColumn(f) {
+			return &ValidationError{Name: f, err: fmt.Errorf("ent: invalid field %q for query", f)}
+		}
+	}
 	if iq.path != nil {
 		prev, err := iq.path(ctx)
 		if err != nil {
@@ -278,18 +278,17 @@ func (iq *ItemQuery) sqlAll(ctx context.Context) ([]*Item, error) {
 		nodes = []*Item{}
 		_spec = iq.querySpec()
 	)
-	_spec.ScanValues = func() []interface{} {
+	_spec.ScanValues = func(columns []string) ([]interface{}, error) {
 		node := &Item{config: iq.config}
 		nodes = append(nodes, node)
-		values := node.scanValues()
-		return values
+		return node.scanValues(columns)
 	}
-	_spec.Assign = func(values ...interface{}) error {
+	_spec.Assign = func(columns []string, values []interface{}) error {
 		if len(nodes) == 0 {
 			return fmt.Errorf("ent: Assign called without calling ScanValues")
 		}
 		node := nodes[len(nodes)-1]
-		return node.assignValues(values...)
+		return node.assignValues(columns, values)
 	}
 	if err := sqlgraph.QueryNodes(ctx, iq.driver, _spec); err != nil {
 		return nil, err
@@ -325,6 +324,9 @@ func (iq *ItemQuery) querySpec() *sqlgraph.QuerySpec {
 		},
 		From:   iq.sql,
 		Unique: true,
+	}
+	if fields := iq.fields; len(fields) > 0 {
+		_spec.Node.Columns = fields
 	}
 	if ps := iq.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -626,20 +628,17 @@ func (igb *ItemGroupBy) sqlQuery() *sql.Selector {
 
 // ItemSelect is the builder for select fields of Item entities.
 type ItemSelect struct {
-	config
-	fields []string
+	*ItemQuery
 	// intermediate query (i.e. traversal path).
-	sql  *sql.Selector
-	path func(context.Context) (*sql.Selector, error)
+	sql *sql.Selector
 }
 
 // Scan applies the selector query and scan the result into the given value.
 func (is *ItemSelect) Scan(ctx context.Context, v interface{}) error {
-	query, err := is.path(ctx)
-	if err != nil {
+	if err := is.prepareQuery(ctx); err != nil {
 		return err
 	}
-	is.sql = query
+	is.sql = is.ItemQuery.sqlQuery()
 	return is.sqlScan(ctx, v)
 }
 
@@ -839,11 +838,6 @@ func (is *ItemSelect) BoolX(ctx context.Context) bool {
 }
 
 func (is *ItemSelect) sqlScan(ctx context.Context, v interface{}) error {
-	for _, f := range is.fields {
-		if !item.ValidColumn(f) {
-			return &ValidationError{Name: f, err: fmt.Errorf("invalid field %q for selection", f)}
-		}
-	}
 	rows := &sql.Rows{}
 	query, args := is.sqlQuery().Query()
 	if err := is.driver.Query(ctx, query, args, rows); err != nil {

@@ -67,7 +67,7 @@ func (su *StreetUpdate) ClearCity() *StreetUpdate {
 	return su
 }
 
-// Save executes the query and returns the number of rows/vertices matched by this operation.
+// Save executes the query and returns the number of nodes affected by the update operation.
 func (su *StreetUpdate) Save(ctx context.Context) (int, error) {
 	var (
 		err      error
@@ -343,7 +343,7 @@ func (suo *StreetUpdateOne) sqlSave(ctx context.Context) (_node *Street, err err
 	}
 	_node = &Street{config: suo.config}
 	_spec.Assign = _node.assignValues
-	_spec.ScanValues = _node.scanValues()
+	_spec.ScanValues = _node.scanValues
 	if err = sqlgraph.UpdateNode(ctx, suo.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
 			err = &NotFoundError{street.Label}

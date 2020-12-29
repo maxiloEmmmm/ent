@@ -26,7 +26,7 @@ type UserQuery struct {
 	limit      *int
 	offset     *int
 	order      []OrderFunc
-	unique     []string
+	fields     []string
 	predicates []predicate.User
 	// eager-loading edges.
 	withCard      *CardQuery
@@ -389,13 +389,26 @@ func (uq *UserQuery) ExistX(ctx context.Context) bool {
 // Clone returns a duplicate of the query builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
 func (uq *UserQuery) Clone() *UserQuery {
+	if uq == nil {
+		return nil
+	}
 	return &UserQuery{
-		config:     uq.config,
-		limit:      uq.limit,
-		offset:     uq.offset,
-		order:      append([]OrderFunc{}, uq.order...),
-		unique:     append([]string{}, uq.unique...),
-		predicates: append([]predicate.User{}, uq.predicates...),
+		config:        uq.config,
+		limit:         uq.limit,
+		offset:        uq.offset,
+		order:         append([]OrderFunc{}, uq.order...),
+		predicates:    append([]predicate.User{}, uq.predicates...),
+		withCard:      uq.withCard.Clone(),
+		withPets:      uq.withPets.Clone(),
+		withFiles:     uq.withFiles.Clone(),
+		withGroups:    uq.withGroups.Clone(),
+		withFriends:   uq.withFriends.Clone(),
+		withFollowers: uq.withFollowers.Clone(),
+		withFollowing: uq.withFollowing.Clone(),
+		withTeam:      uq.withTeam.Clone(),
+		withSpouse:    uq.withSpouse.Clone(),
+		withChildren:  uq.withChildren.Clone(),
+		withParent:    uq.withParent.Clone(),
 		// clone intermediate query.
 		gremlin: uq.gremlin.Clone(),
 		path:    uq.path,
@@ -563,15 +576,8 @@ func (uq *UserQuery) GroupBy(field string, fields ...string) *UserGroupBy {
 //		Scan(ctx, &v)
 //
 func (uq *UserQuery) Select(field string, fields ...string) *UserSelect {
-	selector := &UserSelect{config: uq.config}
-	selector.fields = append([]string{field}, fields...)
-	selector.path = func(ctx context.Context) (prev *dsl.Traversal, err error) {
-		if err := uq.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		return uq.gremlinQuery(), nil
-	}
-	return selector
+	uq.fields = append([]string{field}, fields...)
+	return &UserSelect{UserQuery: uq}
 }
 
 func (uq *UserQuery) prepareQuery(ctx context.Context) error {
@@ -587,7 +593,17 @@ func (uq *UserQuery) prepareQuery(ctx context.Context) error {
 
 func (uq *UserQuery) gremlinAll(ctx context.Context) ([]*User, error) {
 	res := &gremlin.Response{}
-	query, bindings := uq.gremlinQuery().ValueMap(true).Query()
+	traversal := uq.gremlinQuery()
+	if len(uq.fields) > 0 {
+		fields := make([]interface{}, len(uq.fields))
+		for i, f := range uq.fields {
+			fields[i] = f
+		}
+		traversal.ValueMap(fields...)
+	} else {
+		traversal.ValueMap(true)
+	}
+	query, bindings := traversal.Query()
 	if err := uq.driver.Exec(ctx, query, bindings, res); err != nil {
 		return nil, err
 	}
@@ -639,9 +655,7 @@ func (uq *UserQuery) gremlinQuery() *dsl.Traversal {
 	case limit != nil:
 		v.Limit(*limit)
 	}
-	if unique := uq.unique; len(unique) == 0 {
-		v.Dedup()
-	}
+	v.Dedup()
 	return v
 }
 
@@ -905,20 +919,17 @@ func (ugb *UserGroupBy) gremlinQuery() *dsl.Traversal {
 
 // UserSelect is the builder for select fields of User entities.
 type UserSelect struct {
-	config
-	fields []string
+	*UserQuery
 	// intermediate query (i.e. traversal path).
 	gremlin *dsl.Traversal
-	path    func(context.Context) (*dsl.Traversal, error)
 }
 
 // Scan applies the selector query and scan the result into the given value.
 func (us *UserSelect) Scan(ctx context.Context, v interface{}) error {
-	query, err := us.path(ctx)
-	if err != nil {
+	if err := us.prepareQuery(ctx); err != nil {
 		return err
 	}
-	us.gremlin = query
+	us.gremlin = us.UserQuery.gremlinQuery()
 	return us.gremlinScan(ctx, v)
 }
 

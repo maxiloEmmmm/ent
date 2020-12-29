@@ -25,6 +25,7 @@ import (
 func init() {
 	cardMixin := schema.Card{}.Mixin()
 	cardMixinFields0 := cardMixin[0].Fields()
+	_ = cardMixinFields0
 	cardFields := schema.Card{}.Fields()
 	_ = cardFields
 	// cardDescCreateTime is the schema descriptor for create_time field.
@@ -59,6 +60,10 @@ func init() {
 	fieldtypeDescLink := fieldtypeFields[30].Descriptor()
 	// fieldtype.LinkValidator is a validator for the "link" field. It is called by the builders before save.
 	fieldtype.LinkValidator = fieldtypeDescLink.Validators[0].(func(string) error)
+	// fieldtypeDescMAC is the schema descriptor for mac field.
+	fieldtypeDescMAC := fieldtypeFields[45].Descriptor()
+	// fieldtype.MACValidator is a validator for the "mac" field. It is called by the builders before save.
+	fieldtype.MACValidator = fieldtypeDescMAC.Validators[0].(func(string) error)
 	fileFields := schema.File{}.Fields()
 	_ = fileFields
 	// fileDescSize is the schema descriptor for size field.
@@ -133,6 +138,7 @@ func init() {
 	task.PriorityValidator = taskDescPriority.Validators[0].(func(int) error)
 	userMixin := schema.User{}.Mixin()
 	userMixinFields0 := userMixin[0].Fields()
+	_ = userMixinFields0
 	userFields := schema.User{}.Fields()
 	_ = userFields
 	// userDescOptionalInt is the schema descriptor for optional_int field.

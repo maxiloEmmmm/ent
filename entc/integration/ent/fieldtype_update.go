@@ -20,6 +20,7 @@ import (
 	"github.com/facebook/ent/entc/integration/ent/role"
 	"github.com/facebook/ent/entc/integration/ent/schema"
 	"github.com/facebook/ent/schema/field"
+	"github.com/google/uuid"
 )
 
 // FieldTypeUpdate is the builder for updating FieldType entities.
@@ -992,12 +993,36 @@ func (ftu *FieldTypeUpdate) SetNillableRole(r *role.Role) *FieldTypeUpdate {
 	return ftu
 }
 
+// SetMAC sets the mac field.
+func (ftu *FieldTypeUpdate) SetMAC(s schema.MAC) *FieldTypeUpdate {
+	ftu.mutation.SetMAC(s)
+	return ftu
+}
+
+// ClearMAC clears the value of mac.
+func (ftu *FieldTypeUpdate) ClearMAC() *FieldTypeUpdate {
+	ftu.mutation.ClearMAC()
+	return ftu
+}
+
+// SetUUID sets the uuid field.
+func (ftu *FieldTypeUpdate) SetUUID(u uuid.UUID) *FieldTypeUpdate {
+	ftu.mutation.SetUUID(u)
+	return ftu
+}
+
+// ClearUUID clears the value of uuid.
+func (ftu *FieldTypeUpdate) ClearUUID() *FieldTypeUpdate {
+	ftu.mutation.ClearUUID()
+	return ftu
+}
+
 // Mutation returns the FieldTypeMutation object of the builder.
 func (ftu *FieldTypeUpdate) Mutation() *FieldTypeMutation {
 	return ftu.mutation
 }
 
-// Save executes the query and returns the number of rows/vertices matched by this operation.
+// Save executes the query and returns the number of nodes affected by the update operation.
 func (ftu *FieldTypeUpdate) Save(ctx context.Context) (int, error) {
 	var (
 		err      error
@@ -1079,6 +1104,11 @@ func (ftu *FieldTypeUpdate) check() error {
 	if v, ok := ftu.mutation.Role(); ok {
 		if err := fieldtype.RoleValidator(v); err != nil {
 			return &ValidationError{Name: "role", err: fmt.Errorf("ent: validator failed for field \"role\": %w", err)}
+		}
+	}
+	if v, ok := ftu.mutation.MAC(); ok {
+		if err := fieldtype.MACValidator(v.String()); err != nil {
+			return &ValidationError{Name: "mac", err: fmt.Errorf("ent: validator failed for field \"mac\": %w", err)}
 		}
 	}
 	return nil
@@ -1852,6 +1882,32 @@ func (ftu *FieldTypeUpdate) sqlSave(ctx context.Context) (n int, err error) {
 			Type:   field.TypeEnum,
 			Value:  value,
 			Column: fieldtype.FieldRole,
+		})
+	}
+	if value, ok := ftu.mutation.MAC(); ok {
+		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
+			Type:   field.TypeString,
+			Value:  value,
+			Column: fieldtype.FieldMAC,
+		})
+	}
+	if ftu.mutation.MACCleared() {
+		_spec.Fields.Clear = append(_spec.Fields.Clear, &sqlgraph.FieldSpec{
+			Type:   field.TypeString,
+			Column: fieldtype.FieldMAC,
+		})
+	}
+	if value, ok := ftu.mutation.UUID(); ok {
+		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
+			Type:   field.TypeUUID,
+			Value:  value,
+			Column: fieldtype.FieldUUID,
+		})
+	}
+	if ftu.mutation.UUIDCleared() {
+		_spec.Fields.Clear = append(_spec.Fields.Clear, &sqlgraph.FieldSpec{
+			Type:   field.TypeUUID,
+			Column: fieldtype.FieldUUID,
 		})
 	}
 	if n, err = sqlgraph.UpdateNodes(ctx, ftu.driver, _spec); err != nil {
@@ -2829,6 +2885,30 @@ func (ftuo *FieldTypeUpdateOne) SetNillableRole(r *role.Role) *FieldTypeUpdateOn
 	return ftuo
 }
 
+// SetMAC sets the mac field.
+func (ftuo *FieldTypeUpdateOne) SetMAC(s schema.MAC) *FieldTypeUpdateOne {
+	ftuo.mutation.SetMAC(s)
+	return ftuo
+}
+
+// ClearMAC clears the value of mac.
+func (ftuo *FieldTypeUpdateOne) ClearMAC() *FieldTypeUpdateOne {
+	ftuo.mutation.ClearMAC()
+	return ftuo
+}
+
+// SetUUID sets the uuid field.
+func (ftuo *FieldTypeUpdateOne) SetUUID(u uuid.UUID) *FieldTypeUpdateOne {
+	ftuo.mutation.SetUUID(u)
+	return ftuo
+}
+
+// ClearUUID clears the value of uuid.
+func (ftuo *FieldTypeUpdateOne) ClearUUID() *FieldTypeUpdateOne {
+	ftuo.mutation.ClearUUID()
+	return ftuo
+}
+
 // Mutation returns the FieldTypeMutation object of the builder.
 func (ftuo *FieldTypeUpdateOne) Mutation() *FieldTypeMutation {
 	return ftuo.mutation
@@ -2916,6 +2996,11 @@ func (ftuo *FieldTypeUpdateOne) check() error {
 	if v, ok := ftuo.mutation.Role(); ok {
 		if err := fieldtype.RoleValidator(v); err != nil {
 			return &ValidationError{Name: "role", err: fmt.Errorf("ent: validator failed for field \"role\": %w", err)}
+		}
+	}
+	if v, ok := ftuo.mutation.MAC(); ok {
+		if err := fieldtype.MACValidator(v.String()); err != nil {
+			return &ValidationError{Name: "mac", err: fmt.Errorf("ent: validator failed for field \"mac\": %w", err)}
 		}
 	}
 	return nil
@@ -3689,9 +3774,35 @@ func (ftuo *FieldTypeUpdateOne) sqlSave(ctx context.Context) (_node *FieldType, 
 			Column: fieldtype.FieldRole,
 		})
 	}
+	if value, ok := ftuo.mutation.MAC(); ok {
+		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
+			Type:   field.TypeString,
+			Value:  value,
+			Column: fieldtype.FieldMAC,
+		})
+	}
+	if ftuo.mutation.MACCleared() {
+		_spec.Fields.Clear = append(_spec.Fields.Clear, &sqlgraph.FieldSpec{
+			Type:   field.TypeString,
+			Column: fieldtype.FieldMAC,
+		})
+	}
+	if value, ok := ftuo.mutation.UUID(); ok {
+		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
+			Type:   field.TypeUUID,
+			Value:  value,
+			Column: fieldtype.FieldUUID,
+		})
+	}
+	if ftuo.mutation.UUIDCleared() {
+		_spec.Fields.Clear = append(_spec.Fields.Clear, &sqlgraph.FieldSpec{
+			Type:   field.TypeUUID,
+			Column: fieldtype.FieldUUID,
+		})
+	}
 	_node = &FieldType{config: ftuo.config}
 	_spec.Assign = _node.assignValues
-	_spec.ScanValues = _node.scanValues()
+	_spec.ScanValues = _node.scanValues
 	if err = sqlgraph.UpdateNode(ctx, ftuo.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
 			err = &NotFoundError{fieldtype.Label}

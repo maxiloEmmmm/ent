@@ -27,7 +27,7 @@ type GroupInfoQuery struct {
 	limit      *int
 	offset     *int
 	order      []OrderFunc
-	unique     []string
+	fields     []string
 	predicates []predicate.GroupInfo
 	// eager-loading edges.
 	withGroups *GroupQuery
@@ -240,13 +240,16 @@ func (giq *GroupInfoQuery) ExistX(ctx context.Context) bool {
 // Clone returns a duplicate of the query builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
 func (giq *GroupInfoQuery) Clone() *GroupInfoQuery {
+	if giq == nil {
+		return nil
+	}
 	return &GroupInfoQuery{
 		config:     giq.config,
 		limit:      giq.limit,
 		offset:     giq.offset,
 		order:      append([]OrderFunc{}, giq.order...),
-		unique:     append([]string{}, giq.unique...),
 		predicates: append([]predicate.GroupInfo{}, giq.predicates...),
+		withGroups: giq.withGroups.Clone(),
 		// clone intermediate query.
 		gremlin: giq.gremlin.Clone(),
 		path:    giq.path,
@@ -304,15 +307,8 @@ func (giq *GroupInfoQuery) GroupBy(field string, fields ...string) *GroupInfoGro
 //		Scan(ctx, &v)
 //
 func (giq *GroupInfoQuery) Select(field string, fields ...string) *GroupInfoSelect {
-	selector := &GroupInfoSelect{config: giq.config}
-	selector.fields = append([]string{field}, fields...)
-	selector.path = func(ctx context.Context) (prev *dsl.Traversal, err error) {
-		if err := giq.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		return giq.gremlinQuery(), nil
-	}
-	return selector
+	giq.fields = append([]string{field}, fields...)
+	return &GroupInfoSelect{GroupInfoQuery: giq}
 }
 
 func (giq *GroupInfoQuery) prepareQuery(ctx context.Context) error {
@@ -328,7 +324,17 @@ func (giq *GroupInfoQuery) prepareQuery(ctx context.Context) error {
 
 func (giq *GroupInfoQuery) gremlinAll(ctx context.Context) ([]*GroupInfo, error) {
 	res := &gremlin.Response{}
-	query, bindings := giq.gremlinQuery().ValueMap(true).Query()
+	traversal := giq.gremlinQuery()
+	if len(giq.fields) > 0 {
+		fields := make([]interface{}, len(giq.fields))
+		for i, f := range giq.fields {
+			fields[i] = f
+		}
+		traversal.ValueMap(fields...)
+	} else {
+		traversal.ValueMap(true)
+	}
+	query, bindings := traversal.Query()
 	if err := giq.driver.Exec(ctx, query, bindings, res); err != nil {
 		return nil, err
 	}
@@ -380,9 +386,7 @@ func (giq *GroupInfoQuery) gremlinQuery() *dsl.Traversal {
 	case limit != nil:
 		v.Limit(*limit)
 	}
-	if unique := giq.unique; len(unique) == 0 {
-		v.Dedup()
-	}
+	v.Dedup()
 	return v
 }
 
@@ -646,20 +650,17 @@ func (gigb *GroupInfoGroupBy) gremlinQuery() *dsl.Traversal {
 
 // GroupInfoSelect is the builder for select fields of GroupInfo entities.
 type GroupInfoSelect struct {
-	config
-	fields []string
+	*GroupInfoQuery
 	// intermediate query (i.e. traversal path).
 	gremlin *dsl.Traversal
-	path    func(context.Context) (*dsl.Traversal, error)
 }
 
 // Scan applies the selector query and scan the result into the given value.
 func (gis *GroupInfoSelect) Scan(ctx context.Context, v interface{}) error {
-	query, err := gis.path(ctx)
-	if err != nil {
+	if err := gis.prepareQuery(ctx); err != nil {
 		return err
 	}
-	gis.gremlin = query
+	gis.gremlin = gis.GroupInfoQuery.gremlinQuery()
 	return gis.gremlinScan(ctx, v)
 }
 

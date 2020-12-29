@@ -26,7 +26,7 @@ type TaskQuery struct {
 	limit      *int
 	offset     *int
 	order      []OrderFunc
-	unique     []string
+	fields     []string
 	predicates []predicate.Task
 	// intermediate query (i.e. traversal path).
 	gremlin *dsl.Traversal
@@ -223,12 +223,14 @@ func (tq *TaskQuery) ExistX(ctx context.Context) bool {
 // Clone returns a duplicate of the query builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
 func (tq *TaskQuery) Clone() *TaskQuery {
+	if tq == nil {
+		return nil
+	}
 	return &TaskQuery{
 		config:     tq.config,
 		limit:      tq.limit,
 		offset:     tq.offset,
 		order:      append([]OrderFunc{}, tq.order...),
-		unique:     append([]string{}, tq.unique...),
 		predicates: append([]predicate.Task{}, tq.predicates...),
 		// clone intermediate query.
 		gremlin: tq.gremlin.Clone(),
@@ -276,15 +278,8 @@ func (tq *TaskQuery) GroupBy(field string, fields ...string) *TaskGroupBy {
 //		Scan(ctx, &v)
 //
 func (tq *TaskQuery) Select(field string, fields ...string) *TaskSelect {
-	selector := &TaskSelect{config: tq.config}
-	selector.fields = append([]string{field}, fields...)
-	selector.path = func(ctx context.Context) (prev *dsl.Traversal, err error) {
-		if err := tq.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		return tq.gremlinQuery(), nil
-	}
-	return selector
+	tq.fields = append([]string{field}, fields...)
+	return &TaskSelect{TaskQuery: tq}
 }
 
 func (tq *TaskQuery) prepareQuery(ctx context.Context) error {
@@ -300,7 +295,17 @@ func (tq *TaskQuery) prepareQuery(ctx context.Context) error {
 
 func (tq *TaskQuery) gremlinAll(ctx context.Context) ([]*Task, error) {
 	res := &gremlin.Response{}
-	query, bindings := tq.gremlinQuery().ValueMap(true).Query()
+	traversal := tq.gremlinQuery()
+	if len(tq.fields) > 0 {
+		fields := make([]interface{}, len(tq.fields))
+		for i, f := range tq.fields {
+			fields[i] = f
+		}
+		traversal.ValueMap(fields...)
+	} else {
+		traversal.ValueMap(true)
+	}
+	query, bindings := traversal.Query()
 	if err := tq.driver.Exec(ctx, query, bindings, res); err != nil {
 		return nil, err
 	}
@@ -352,9 +357,7 @@ func (tq *TaskQuery) gremlinQuery() *dsl.Traversal {
 	case limit != nil:
 		v.Limit(*limit)
 	}
-	if unique := tq.unique; len(unique) == 0 {
-		v.Dedup()
-	}
+	v.Dedup()
 	return v
 }
 
@@ -618,20 +621,17 @@ func (tgb *TaskGroupBy) gremlinQuery() *dsl.Traversal {
 
 // TaskSelect is the builder for select fields of Task entities.
 type TaskSelect struct {
-	config
-	fields []string
+	*TaskQuery
 	// intermediate query (i.e. traversal path).
 	gremlin *dsl.Traversal
-	path    func(context.Context) (*dsl.Traversal, error)
 }
 
 // Scan applies the selector query and scan the result into the given value.
 func (ts *TaskSelect) Scan(ctx context.Context, v interface{}) error {
-	query, err := ts.path(ctx)
-	if err != nil {
+	if err := ts.prepareQuery(ctx); err != nil {
 		return err
 	}
-	ts.gremlin = query
+	ts.gremlin = ts.TaskQuery.gremlinQuery()
 	return ts.gremlinScan(ctx, v)
 }
 

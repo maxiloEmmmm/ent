@@ -121,6 +121,8 @@ var schemaGraph = func() *sqlgraph.Schema {
 			fieldtype.FieldSchemaFloat32:         {Type: field.TypeFloat32, Column: fieldtype.FieldSchemaFloat32},
 			fieldtype.FieldNullFloat:             {Type: field.TypeFloat64, Column: fieldtype.FieldNullFloat},
 			fieldtype.FieldRole:                  {Type: field.TypeEnum, Column: fieldtype.FieldRole},
+			fieldtype.FieldMAC:                   {Type: field.TypeString, Column: fieldtype.FieldMAC},
+			fieldtype.FieldUUID:                  {Type: field.TypeUUID, Column: fieldtype.FieldUUID},
 		},
 	}
 	graph.Nodes[3] = &sqlgraph.Node{
@@ -240,6 +242,7 @@ var schemaGraph = func() *sqlgraph.Schema {
 		Type: "Pet",
 		Fields: map[string]*sqlgraph.FieldSpec{
 			pet.FieldName: {Type: field.TypeString, Column: pet.FieldName},
+			pet.FieldUUID: {Type: field.TypeUUID, Column: pet.FieldUUID},
 		},
 	}
 	graph.Nodes[11] = &sqlgraph.Node{
@@ -1028,6 +1031,16 @@ func (f *FieldTypeFilter) WhereRole(p entql.StringP) {
 	f.Where(p.Field(fieldtype.FieldRole))
 }
 
+// WhereMAC applies the entql string predicate on the mac field.
+func (f *FieldTypeFilter) WhereMAC(p entql.StringP) {
+	f.Where(p.Field(fieldtype.FieldMAC))
+}
+
+// WhereUUID applies the entql [16]byte predicate on the uuid field.
+func (f *FieldTypeFilter) WhereUUID(p entql.ValueP) {
+	f.Where(p.Field(fieldtype.FieldUUID))
+}
+
 // addPredicate implements the predicateAdder interface.
 func (fq *FileQuery) addPredicate(pred func(s *sql.Selector)) {
 	fq.predicates = append(fq.predicates, pred)
@@ -1577,6 +1590,11 @@ func (f *PetFilter) WhereID(p entql.IntP) {
 // WhereName applies the entql string predicate on the name field.
 func (f *PetFilter) WhereName(p entql.StringP) {
 	f.Where(p.Field(pet.FieldName))
+}
+
+// WhereUUID applies the entql [16]byte predicate on the uuid field.
+func (f *PetFilter) WhereUUID(p entql.ValueP) {
+	f.Where(p.Field(pet.FieldUUID))
 }
 
 // WhereHasTeam applies a predicate to check if query has an edge team.

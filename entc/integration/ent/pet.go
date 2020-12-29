@@ -13,6 +13,7 @@ import (
 	"github.com/facebook/ent/dialect/sql"
 	"github.com/facebook/ent/entc/integration/ent/pet"
 	"github.com/facebook/ent/entc/integration/ent/user"
+	"github.com/google/uuid"
 )
 
 // Pet is the model entity for the Pet schema.
@@ -22,6 +23,8 @@ type Pet struct {
 	ID int `json:"id,omitempty"`
 	// Name holds the value of the "name" field.
 	Name string `json:"name,omitempty"`
+	// UUID holds the value of the "uuid" field.
+	UUID uuid.UUID `json:"uuid,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the PetQuery when eager-loading is set.
 	Edges     PetEdges `json:"edges"`
@@ -69,51 +72,67 @@ func (e PetEdges) OwnerOrErr() (*User, error) {
 }
 
 // scanValues returns the types for scanning values from sql.Rows.
-func (*Pet) scanValues() []interface{} {
-	return []interface{}{
-		&sql.NullInt64{},  // id
-		&sql.NullString{}, // name
+func (*Pet) scanValues(columns []string) ([]interface{}, error) {
+	values := make([]interface{}, len(columns))
+	for i := range columns {
+		switch columns[i] {
+		case pet.FieldID:
+			values[i] = &sql.NullInt64{}
+		case pet.FieldName:
+			values[i] = &sql.NullString{}
+		case pet.FieldUUID:
+			values[i] = &uuid.UUID{}
+		case pet.ForeignKeys[0]: // user_pets
+			values[i] = &sql.NullInt64{}
+		case pet.ForeignKeys[1]: // user_team
+			values[i] = &sql.NullInt64{}
+		default:
+			return nil, fmt.Errorf("unexpected column %q for type Pet", columns[i])
+		}
 	}
-}
-
-// fkValues returns the types for scanning foreign-keys values from sql.Rows.
-func (*Pet) fkValues() []interface{} {
-	return []interface{}{
-		&sql.NullInt64{}, // user_pets
-		&sql.NullInt64{}, // user_team
-	}
+	return values, nil
 }
 
 // assignValues assigns the values that were returned from sql.Rows (after scanning)
 // to the Pet fields.
-func (pe *Pet) assignValues(values ...interface{}) error {
-	if m, n := len(values), len(pet.Columns); m < n {
+func (pe *Pet) assignValues(columns []string, values []interface{}) error {
+	if m, n := len(values), len(columns); m < n {
 		return fmt.Errorf("mismatch number of scan values: %d != %d", m, n)
 	}
-	value, ok := values[0].(*sql.NullInt64)
-	if !ok {
-		return fmt.Errorf("unexpected type %T for field id", value)
-	}
-	pe.ID = int(value.Int64)
-	values = values[1:]
-	if value, ok := values[0].(*sql.NullString); !ok {
-		return fmt.Errorf("unexpected type %T for field name", values[0])
-	} else if value.Valid {
-		pe.Name = value.String
-	}
-	values = values[1:]
-	if len(values) == len(pet.ForeignKeys) {
-		if value, ok := values[0].(*sql.NullInt64); !ok {
-			return fmt.Errorf("unexpected type %T for edge-field user_pets", value)
-		} else if value.Valid {
-			pe.user_pets = new(int)
-			*pe.user_pets = int(value.Int64)
-		}
-		if value, ok := values[1].(*sql.NullInt64); !ok {
-			return fmt.Errorf("unexpected type %T for edge-field user_team", value)
-		} else if value.Valid {
-			pe.user_team = new(int)
-			*pe.user_team = int(value.Int64)
+	for i := range columns {
+		switch columns[i] {
+		case pet.FieldID:
+			value, ok := values[i].(*sql.NullInt64)
+			if !ok {
+				return fmt.Errorf("unexpected type %T for field id", value)
+			}
+			pe.ID = int(value.Int64)
+		case pet.FieldName:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field name", values[i])
+			} else if value.Valid {
+				pe.Name = value.String
+			}
+		case pet.FieldUUID:
+			if value, ok := values[i].(*uuid.UUID); !ok {
+				return fmt.Errorf("unexpected type %T for field uuid", values[i])
+			} else if value != nil {
+				pe.UUID = *value
+			}
+		case pet.ForeignKeys[0]:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for edge-field user_pets", value)
+			} else if value.Valid {
+				pe.user_pets = new(int)
+				*pe.user_pets = int(value.Int64)
+			}
+		case pet.ForeignKeys[1]:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for edge-field user_team", value)
+			} else if value.Valid {
+				pe.user_team = new(int)
+				*pe.user_team = int(value.Int64)
+			}
 		}
 	}
 	return nil
@@ -154,6 +173,8 @@ func (pe *Pet) String() string {
 	builder.WriteString(fmt.Sprintf("id=%v", pe.ID))
 	builder.WriteString(", name=")
 	builder.WriteString(pe.Name)
+	builder.WriteString(", uuid=")
+	builder.WriteString(fmt.Sprintf("%v", pe.UUID))
 	builder.WriteByte(')')
 	return builder.String()
 }

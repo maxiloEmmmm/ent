@@ -26,7 +26,7 @@ type StreetQuery struct {
 	limit      *int
 	offset     *int
 	order      []OrderFunc
-	unique     []string
+	fields     []string
 	predicates []predicate.Street
 	// eager-loading edges.
 	withCity *CityQuery
@@ -248,13 +248,16 @@ func (sq *StreetQuery) ExistX(ctx context.Context) bool {
 // Clone returns a duplicate of the query builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
 func (sq *StreetQuery) Clone() *StreetQuery {
+	if sq == nil {
+		return nil
+	}
 	return &StreetQuery{
 		config:     sq.config,
 		limit:      sq.limit,
 		offset:     sq.offset,
 		order:      append([]OrderFunc{}, sq.order...),
-		unique:     append([]string{}, sq.unique...),
 		predicates: append([]predicate.Street{}, sq.predicates...),
+		withCity:   sq.withCity.Clone(),
 		// clone intermediate query.
 		sql:  sq.sql.Clone(),
 		path: sq.path,
@@ -312,18 +315,16 @@ func (sq *StreetQuery) GroupBy(field string, fields ...string) *StreetGroupBy {
 //		Scan(ctx, &v)
 //
 func (sq *StreetQuery) Select(field string, fields ...string) *StreetSelect {
-	selector := &StreetSelect{config: sq.config}
-	selector.fields = append([]string{field}, fields...)
-	selector.path = func(ctx context.Context) (prev *sql.Selector, err error) {
-		if err := sq.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		return sq.sqlQuery(), nil
-	}
-	return selector
+	sq.fields = append([]string{field}, fields...)
+	return &StreetSelect{StreetQuery: sq}
 }
 
 func (sq *StreetQuery) prepareQuery(ctx context.Context) error {
+	for _, f := range sq.fields {
+		if !street.ValidColumn(f) {
+			return &ValidationError{Name: f, err: fmt.Errorf("ent: invalid field %q for query", f)}
+		}
+	}
 	if sq.path != nil {
 		prev, err := sq.path(ctx)
 		if err != nil {
@@ -349,22 +350,18 @@ func (sq *StreetQuery) sqlAll(ctx context.Context) ([]*Street, error) {
 	if withFKs {
 		_spec.Node.Columns = append(_spec.Node.Columns, street.ForeignKeys...)
 	}
-	_spec.ScanValues = func() []interface{} {
+	_spec.ScanValues = func(columns []string) ([]interface{}, error) {
 		node := &Street{config: sq.config}
 		nodes = append(nodes, node)
-		values := node.scanValues()
-		if withFKs {
-			values = append(values, node.fkValues()...)
-		}
-		return values
+		return node.scanValues(columns)
 	}
-	_spec.Assign = func(values ...interface{}) error {
+	_spec.Assign = func(columns []string, values []interface{}) error {
 		if len(nodes) == 0 {
 			return fmt.Errorf("ent: Assign called without calling ScanValues")
 		}
 		node := nodes[len(nodes)-1]
 		node.Edges.loadedTypes = loadedTypes
-		return node.assignValues(values...)
+		return node.assignValues(columns, values)
 	}
 	if err := sqlgraph.QueryNodes(ctx, sq.driver, _spec); err != nil {
 		return nil, err
@@ -426,6 +423,9 @@ func (sq *StreetQuery) querySpec() *sqlgraph.QuerySpec {
 		},
 		From:   sq.sql,
 		Unique: true,
+	}
+	if fields := sq.fields; len(fields) > 0 {
+		_spec.Node.Columns = fields
 	}
 	if ps := sq.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -727,20 +727,17 @@ func (sgb *StreetGroupBy) sqlQuery() *sql.Selector {
 
 // StreetSelect is the builder for select fields of Street entities.
 type StreetSelect struct {
-	config
-	fields []string
+	*StreetQuery
 	// intermediate query (i.e. traversal path).
-	sql  *sql.Selector
-	path func(context.Context) (*sql.Selector, error)
+	sql *sql.Selector
 }
 
 // Scan applies the selector query and scan the result into the given value.
 func (ss *StreetSelect) Scan(ctx context.Context, v interface{}) error {
-	query, err := ss.path(ctx)
-	if err != nil {
+	if err := ss.prepareQuery(ctx); err != nil {
 		return err
 	}
-	ss.sql = query
+	ss.sql = ss.StreetQuery.sqlQuery()
 	return ss.sqlScan(ctx, v)
 }
 
@@ -940,11 +937,6 @@ func (ss *StreetSelect) BoolX(ctx context.Context) bool {
 }
 
 func (ss *StreetSelect) sqlScan(ctx context.Context, v interface{}) error {
-	for _, f := range ss.fields {
-		if !street.ValidColumn(f) {
-			return &ValidationError{Name: f, err: fmt.Errorf("invalid field %q for selection", f)}
-		}
-	}
 	rows := &sql.Rows{}
 	query, args := ss.sqlQuery().Query()
 	if err := ss.driver.Query(ctx, query, args, rows); err != nil {

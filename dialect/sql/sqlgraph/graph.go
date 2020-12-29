@@ -2,7 +2,7 @@
 // This source code is licensed under the Apache 2.0 license found
 // in the LICENSE file in the root directory of this source tree.
 
-// sqlgraph provides graph abstraction capabilities on top
+// Package sqlgraph provides graph abstraction capabilities on top
 // of sql-based databases for ent codegen.
 package sqlgraph
 
@@ -390,8 +390,8 @@ type (
 		Fields    FieldMut
 		Predicate func(*sql.Selector)
 
-		ScanValues []interface{}
-		Assign     func(...interface{}) error
+		ScanValues func(columns []string) ([]interface{}, error)
+		Assign     func(columns []string, values []interface{}) error
 	}
 )
 
@@ -480,8 +480,8 @@ type QuerySpec struct {
 	Order     func(*sql.Selector)
 	Predicate func(*sql.Selector)
 
-	ScanValues func() []interface{}
-	Assign     func(...interface{}) error
+	ScanValues func(columns []string) ([]interface{}, error)
+	Assign     func(columns []string, values []interface{}) error
 }
 
 // QueryNodes queries the nodes in the graph query and scans them to the given values.
@@ -556,12 +556,19 @@ func (q *query) nodes(ctx context.Context, drv dialect.Driver) error {
 		return err
 	}
 	defer rows.Close()
+	columns, err := rows.Columns()
+	if err != nil {
+		return err
+	}
 	for rows.Next() {
-		values := q.ScanValues()
+		values, err := q.ScanValues(columns)
+		if err != nil {
+			return err
+		}
 		if err := rows.Scan(values...); err != nil {
 			return err
 		}
-		if err := q.Assign(values...); err != nil {
+		if err := q.Assign(columns, values); err != nil {
 			return err
 		}
 	}
@@ -659,28 +666,35 @@ func (u *updater) nodes(ctx context.Context, tx dialect.ExecQuerier) (int, error
 		ids        []driver.Value
 		addEdges   = EdgeSpecs(u.Edges.Add).GroupRel()
 		clearEdges = EdgeSpecs(u.Edges.Clear).GroupRel()
+		multiple   = u.hasExternalEdges(addEdges, clearEdges)
+		update     = u.builder.Update(u.Node.Table)
+		selector   = u.builder.Select(u.Node.ID.Column).
+				From(u.builder.Table(u.Node.Table))
 	)
-	selector := u.builder.Select(u.Node.ID.Column).
-		From(u.builder.Table(u.Node.Table))
 	if pred := u.Predicate; pred != nil {
 		pred(selector)
 	}
-	query, args := selector.Query()
-	rows := &sql.Rows{}
-	if err := u.tx.Query(ctx, query, args, rows); err != nil {
-		return 0, fmt.Errorf("querying table %s: %v", u.Node.Table, err)
+	// If this change-set contains multiple table updates.
+	if multiple {
+		query, args := selector.Query()
+		rows := &sql.Rows{}
+		if err := u.tx.Query(ctx, query, args, rows); err != nil {
+			return 0, fmt.Errorf("querying table %s: %v", u.Node.Table, err)
+		}
+		defer rows.Close()
+		if err := sql.ScanSlice(rows, &ids); err != nil {
+			return 0, fmt.Errorf("scan node ids: %v", err)
+		}
+		if err := rows.Close(); err != nil {
+			return 0, err
+		}
+		if len(ids) == 0 {
+			return 0, nil
+		}
+		update.Where(matchID(u.Node.ID.Column, ids))
+	} else {
+		update.FromSelect(selector)
 	}
-	defer rows.Close()
-	if err := sql.ScanSlice(rows, &ids); err != nil {
-		return 0, fmt.Errorf("scan node ids: %v", err)
-	}
-	if err := rows.Close(); err != nil {
-		return 0, err
-	}
-	if len(ids) == 0 {
-		return 0, nil
-	}
-	update := u.builder.Update(u.Node.Table).Where(matchID(u.Node.ID.Column, ids))
 	if err := u.setTableColumns(update, addEdges, clearEdges); err != nil {
 		return 0, err
 	}
@@ -690,9 +704,18 @@ func (u *updater) nodes(ctx context.Context, tx dialect.ExecQuerier) (int, error
 		if err := tx.Exec(ctx, query, args, &res); err != nil {
 			return 0, err
 		}
+		if !multiple {
+			affected, err := res.RowsAffected()
+			if err != nil {
+				return 0, err
+			}
+			return int(affected), nil
+		}
 	}
-	if err := u.setExternalEdges(ctx, ids, addEdges, clearEdges); err != nil {
-		return 0, err
+	if len(ids) > 0 {
+		if err := u.setExternalEdges(ctx, ids, addEdges, clearEdges); err != nil {
+			return 0, err
+		}
 	}
 	return len(ids), nil
 }
@@ -711,6 +734,23 @@ func (u *updater) setExternalEdges(ctx context.Context, ids []driver.Value, addE
 		return err
 	}
 	return nil
+}
+
+func (*updater) hasExternalEdges(addEdges, clearEdges map[Rel][]*EdgeSpec) bool {
+	// M2M edges reside in a join-table, and O2M edges reside
+	// in the M2O table (the entity that holds the FK).
+	if len(clearEdges[M2M]) > 0 || len(addEdges[M2M]) > 0 ||
+		len(clearEdges[O2M]) > 0 || len(addEdges[O2M]) > 0 {
+		return true
+	}
+	for _, edges := range [][]*EdgeSpec{clearEdges[O2O], addEdges[O2O]} {
+		for _, e := range edges {
+			if !e.Inverse {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // setTableColumns sets the table columns and foreign_keys used in insert.
@@ -753,16 +793,27 @@ func (u *updater) setTableColumns(update *sql.UpdateBuilder, addEdges, clearEdge
 
 func (u *updater) scan(rows *sql.Rows) error {
 	defer rows.Close()
+	columns, err := rows.Columns()
+	if err != nil {
+		return err
+	}
 	if !rows.Next() {
 		if err := rows.Err(); err != nil {
 			return err
 		}
 		return &NotFoundError{table: u.Node.Table, id: u.Node.ID.Value}
 	}
-	if err := rows.Scan(u.ScanValues...); err != nil {
+	values, err := u.ScanValues(columns)
+	if err != nil {
+		return err
+	}
+	if err := rows.Scan(values...); err != nil {
 		return fmt.Errorf("failed scanning rows: %v", err)
 	}
-	return u.Assign(u.ScanValues...)
+	if err := u.Assign(columns, values); err != nil {
+		return err
+	}
+	return nil
 }
 
 type creator struct {
@@ -1149,7 +1200,7 @@ func insertLastID(ctx context.Context, tx dialect.ExecQuerier, insert *sql.Inser
 }
 
 // insertLastIDs invokes the batch insert query on the transaction and returns the LastInsertID of all entities.
-func insertLastIDs(ctx context.Context, tx dialect.ExecQuerier, insert *sql.InsertBuilder) (ids []int64, err error) {
+func insertLastIDs(ctx context.Context, tx dialect.ExecQuerier, insert *sql.InsertBuilder) (ids []driver.Value, err error) {
 	query, args := insert.Query()
 	// PostgreSQL does not support the LastInsertId() method of sql.Result
 	// on Exec, and should be extracted manually using the `RETURNING` clause.
@@ -1174,7 +1225,7 @@ func insertLastIDs(ctx context.Context, tx dialect.ExecQuerier, insert *sql.Inse
 	if err != nil {
 		return nil, err
 	}
-	ids = make([]int64, 0, affected)
+	ids = make([]driver.Value, 0, affected)
 	switch insert.Dialect() {
 	case dialect.SQLite:
 		id -= affected - 1

@@ -25,7 +25,7 @@ type CommentQuery struct {
 	limit      *int
 	offset     *int
 	order      []OrderFunc
-	unique     []string
+	fields     []string
 	predicates []predicate.Comment
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
@@ -222,12 +222,14 @@ func (cq *CommentQuery) ExistX(ctx context.Context) bool {
 // Clone returns a duplicate of the query builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
 func (cq *CommentQuery) Clone() *CommentQuery {
+	if cq == nil {
+		return nil
+	}
 	return &CommentQuery{
 		config:     cq.config,
 		limit:      cq.limit,
 		offset:     cq.offset,
 		order:      append([]OrderFunc{}, cq.order...),
-		unique:     append([]string{}, cq.unique...),
 		predicates: append([]predicate.Comment{}, cq.predicates...),
 		// clone intermediate query.
 		sql:  cq.sql.Clone(),
@@ -275,18 +277,16 @@ func (cq *CommentQuery) GroupBy(field string, fields ...string) *CommentGroupBy 
 //		Scan(ctx, &v)
 //
 func (cq *CommentQuery) Select(field string, fields ...string) *CommentSelect {
-	selector := &CommentSelect{config: cq.config}
-	selector.fields = append([]string{field}, fields...)
-	selector.path = func(ctx context.Context) (prev *sql.Selector, err error) {
-		if err := cq.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		return cq.sqlQuery(), nil
-	}
-	return selector
+	cq.fields = append([]string{field}, fields...)
+	return &CommentSelect{CommentQuery: cq}
 }
 
 func (cq *CommentQuery) prepareQuery(ctx context.Context) error {
+	for _, f := range cq.fields {
+		if !comment.ValidColumn(f) {
+			return &ValidationError{Name: f, err: fmt.Errorf("ent: invalid field %q for query", f)}
+		}
+	}
 	if cq.path != nil {
 		prev, err := cq.path(ctx)
 		if err != nil {
@@ -302,18 +302,17 @@ func (cq *CommentQuery) sqlAll(ctx context.Context) ([]*Comment, error) {
 		nodes = []*Comment{}
 		_spec = cq.querySpec()
 	)
-	_spec.ScanValues = func() []interface{} {
+	_spec.ScanValues = func(columns []string) ([]interface{}, error) {
 		node := &Comment{config: cq.config}
 		nodes = append(nodes, node)
-		values := node.scanValues()
-		return values
+		return node.scanValues(columns)
 	}
-	_spec.Assign = func(values ...interface{}) error {
+	_spec.Assign = func(columns []string, values []interface{}) error {
 		if len(nodes) == 0 {
 			return fmt.Errorf("ent: Assign called without calling ScanValues")
 		}
 		node := nodes[len(nodes)-1]
-		return node.assignValues(values...)
+		return node.assignValues(columns, values)
 	}
 	if err := sqlgraph.QueryNodes(ctx, cq.driver, _spec); err != nil {
 		return nil, err
@@ -349,6 +348,9 @@ func (cq *CommentQuery) querySpec() *sqlgraph.QuerySpec {
 		},
 		From:   cq.sql,
 		Unique: true,
+	}
+	if fields := cq.fields; len(fields) > 0 {
+		_spec.Node.Columns = fields
 	}
 	if ps := cq.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -650,20 +652,17 @@ func (cgb *CommentGroupBy) sqlQuery() *sql.Selector {
 
 // CommentSelect is the builder for select fields of Comment entities.
 type CommentSelect struct {
-	config
-	fields []string
+	*CommentQuery
 	// intermediate query (i.e. traversal path).
-	sql  *sql.Selector
-	path func(context.Context) (*sql.Selector, error)
+	sql *sql.Selector
 }
 
 // Scan applies the selector query and scan the result into the given value.
 func (cs *CommentSelect) Scan(ctx context.Context, v interface{}) error {
-	query, err := cs.path(ctx)
-	if err != nil {
+	if err := cs.prepareQuery(ctx); err != nil {
 		return err
 	}
-	cs.sql = query
+	cs.sql = cs.CommentQuery.sqlQuery()
 	return cs.sqlScan(ctx, v)
 }
 
@@ -863,11 +862,6 @@ func (cs *CommentSelect) BoolX(ctx context.Context) bool {
 }
 
 func (cs *CommentSelect) sqlScan(ctx context.Context, v interface{}) error {
-	for _, f := range cs.fields {
-		if !comment.ValidColumn(f) {
-			return &ValidationError{Name: f, err: fmt.Errorf("invalid field %q for selection", f)}
-		}
-	}
 	rows := &sql.Rows{}
 	query, args := cs.sqlQuery().Query()
 	if err := cs.driver.Query(ctx, query, args, rows); err != nil {

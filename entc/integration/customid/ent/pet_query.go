@@ -28,7 +28,7 @@ type PetQuery struct {
 	limit      *int
 	offset     *int
 	order      []OrderFunc
-	unique     []string
+	fields     []string
 	predicates []predicate.Pet
 	// eager-loading edges.
 	withOwner      *UserQuery
@@ -319,13 +319,19 @@ func (pq *PetQuery) ExistX(ctx context.Context) bool {
 // Clone returns a duplicate of the query builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
 func (pq *PetQuery) Clone() *PetQuery {
+	if pq == nil {
+		return nil
+	}
 	return &PetQuery{
-		config:     pq.config,
-		limit:      pq.limit,
-		offset:     pq.offset,
-		order:      append([]OrderFunc{}, pq.order...),
-		unique:     append([]string{}, pq.unique...),
-		predicates: append([]predicate.Pet{}, pq.predicates...),
+		config:         pq.config,
+		limit:          pq.limit,
+		offset:         pq.offset,
+		order:          append([]OrderFunc{}, pq.order...),
+		predicates:     append([]predicate.Pet{}, pq.predicates...),
+		withOwner:      pq.withOwner.Clone(),
+		withCars:       pq.withCars.Clone(),
+		withFriends:    pq.withFriends.Clone(),
+		withBestFriend: pq.withBestFriend.Clone(),
 		// clone intermediate query.
 		sql:  pq.sql.Clone(),
 		path: pq.path,
@@ -392,18 +398,16 @@ func (pq *PetQuery) GroupBy(field string, fields ...string) *PetGroupBy {
 
 // Select one or more fields from the given query.
 func (pq *PetQuery) Select(field string, fields ...string) *PetSelect {
-	selector := &PetSelect{config: pq.config}
-	selector.fields = append([]string{field}, fields...)
-	selector.path = func(ctx context.Context) (prev *sql.Selector, err error) {
-		if err := pq.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		return pq.sqlQuery(), nil
-	}
-	return selector
+	pq.fields = append([]string{field}, fields...)
+	return &PetSelect{PetQuery: pq}
 }
 
 func (pq *PetQuery) prepareQuery(ctx context.Context) error {
+	for _, f := range pq.fields {
+		if !pet.ValidColumn(f) {
+			return &ValidationError{Name: f, err: fmt.Errorf("ent: invalid field %q for query", f)}
+		}
+	}
 	if pq.path != nil {
 		prev, err := pq.path(ctx)
 		if err != nil {
@@ -432,22 +436,18 @@ func (pq *PetQuery) sqlAll(ctx context.Context) ([]*Pet, error) {
 	if withFKs {
 		_spec.Node.Columns = append(_spec.Node.Columns, pet.ForeignKeys...)
 	}
-	_spec.ScanValues = func() []interface{} {
+	_spec.ScanValues = func(columns []string) ([]interface{}, error) {
 		node := &Pet{config: pq.config}
 		nodes = append(nodes, node)
-		values := node.scanValues()
-		if withFKs {
-			values = append(values, node.fkValues()...)
-		}
-		return values
+		return node.scanValues(columns)
 	}
-	_spec.Assign = func(values ...interface{}) error {
+	_spec.Assign = func(columns []string, values []interface{}) error {
 		if len(nodes) == 0 {
 			return fmt.Errorf("ent: Assign called without calling ScanValues")
 		}
 		node := nodes[len(nodes)-1]
 		node.Edges.loadedTypes = loadedTypes
-		return node.assignValues(values...)
+		return node.assignValues(columns, values)
 	}
 	if err := sqlgraph.QueryNodes(ctx, pq.driver, _spec); err != nil {
 		return nil, err
@@ -627,6 +627,9 @@ func (pq *PetQuery) querySpec() *sqlgraph.QuerySpec {
 		},
 		From:   pq.sql,
 		Unique: true,
+	}
+	if fields := pq.fields; len(fields) > 0 {
+		_spec.Node.Columns = fields
 	}
 	if ps := pq.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -928,20 +931,17 @@ func (pgb *PetGroupBy) sqlQuery() *sql.Selector {
 
 // PetSelect is the builder for select fields of Pet entities.
 type PetSelect struct {
-	config
-	fields []string
+	*PetQuery
 	// intermediate query (i.e. traversal path).
-	sql  *sql.Selector
-	path func(context.Context) (*sql.Selector, error)
+	sql *sql.Selector
 }
 
 // Scan applies the selector query and scan the result into the given value.
 func (ps *PetSelect) Scan(ctx context.Context, v interface{}) error {
-	query, err := ps.path(ctx)
-	if err != nil {
+	if err := ps.prepareQuery(ctx); err != nil {
 		return err
 	}
-	ps.sql = query
+	ps.sql = ps.PetQuery.sqlQuery()
 	return ps.sqlScan(ctx, v)
 }
 
@@ -1141,11 +1141,6 @@ func (ps *PetSelect) BoolX(ctx context.Context) bool {
 }
 
 func (ps *PetSelect) sqlScan(ctx context.Context, v interface{}) error {
-	for _, f := range ps.fields {
-		if !pet.ValidColumn(f) {
-			return &ValidationError{Name: f, err: fmt.Errorf("invalid field %q for selection", f)}
-		}
-	}
 	rows := &sql.Rows{}
 	query, args := ps.sqlQuery().Query()
 	if err := ps.driver.Query(ctx, query, args, rows); err != nil {

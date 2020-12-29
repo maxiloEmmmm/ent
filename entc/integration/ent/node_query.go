@@ -26,7 +26,7 @@ type NodeQuery struct {
 	limit      *int
 	offset     *int
 	order      []OrderFunc
-	unique     []string
+	fields     []string
 	predicates []predicate.Node
 	// eager-loading edges.
 	withPrev *NodeQuery
@@ -271,13 +271,17 @@ func (nq *NodeQuery) ExistX(ctx context.Context) bool {
 // Clone returns a duplicate of the query builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
 func (nq *NodeQuery) Clone() *NodeQuery {
+	if nq == nil {
+		return nil
+	}
 	return &NodeQuery{
 		config:     nq.config,
 		limit:      nq.limit,
 		offset:     nq.offset,
 		order:      append([]OrderFunc{}, nq.order...),
-		unique:     append([]string{}, nq.unique...),
 		predicates: append([]predicate.Node{}, nq.predicates...),
+		withPrev:   nq.withPrev.Clone(),
+		withNext:   nq.withNext.Clone(),
 		// clone intermediate query.
 		sql:  nq.sql.Clone(),
 		path: nq.path,
@@ -346,18 +350,16 @@ func (nq *NodeQuery) GroupBy(field string, fields ...string) *NodeGroupBy {
 //		Scan(ctx, &v)
 //
 func (nq *NodeQuery) Select(field string, fields ...string) *NodeSelect {
-	selector := &NodeSelect{config: nq.config}
-	selector.fields = append([]string{field}, fields...)
-	selector.path = func(ctx context.Context) (prev *sql.Selector, err error) {
-		if err := nq.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		return nq.sqlQuery(), nil
-	}
-	return selector
+	nq.fields = append([]string{field}, fields...)
+	return &NodeSelect{NodeQuery: nq}
 }
 
 func (nq *NodeQuery) prepareQuery(ctx context.Context) error {
+	for _, f := range nq.fields {
+		if !node.ValidColumn(f) {
+			return &ValidationError{Name: f, err: fmt.Errorf("ent: invalid field %q for query", f)}
+		}
+	}
 	if nq.path != nil {
 		prev, err := nq.path(ctx)
 		if err != nil {
@@ -384,22 +386,18 @@ func (nq *NodeQuery) sqlAll(ctx context.Context) ([]*Node, error) {
 	if withFKs {
 		_spec.Node.Columns = append(_spec.Node.Columns, node.ForeignKeys...)
 	}
-	_spec.ScanValues = func() []interface{} {
+	_spec.ScanValues = func(columns []string) ([]interface{}, error) {
 		node := &Node{config: nq.config}
 		nodes = append(nodes, node)
-		values := node.scanValues()
-		if withFKs {
-			values = append(values, node.fkValues()...)
-		}
-		return values
+		return node.scanValues(columns)
 	}
-	_spec.Assign = func(values ...interface{}) error {
+	_spec.Assign = func(columns []string, values []interface{}) error {
 		if len(nodes) == 0 {
 			return fmt.Errorf("ent: Assign called without calling ScanValues")
 		}
 		node := nodes[len(nodes)-1]
 		node.Edges.loadedTypes = loadedTypes
-		return node.assignValues(values...)
+		return node.assignValues(columns, values)
 	}
 	if err := sqlgraph.QueryNodes(ctx, nq.driver, _spec); err != nil {
 		return nil, err
@@ -489,6 +487,9 @@ func (nq *NodeQuery) querySpec() *sqlgraph.QuerySpec {
 		},
 		From:   nq.sql,
 		Unique: true,
+	}
+	if fields := nq.fields; len(fields) > 0 {
+		_spec.Node.Columns = fields
 	}
 	if ps := nq.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -790,20 +791,17 @@ func (ngb *NodeGroupBy) sqlQuery() *sql.Selector {
 
 // NodeSelect is the builder for select fields of Node entities.
 type NodeSelect struct {
-	config
-	fields []string
+	*NodeQuery
 	// intermediate query (i.e. traversal path).
-	sql  *sql.Selector
-	path func(context.Context) (*sql.Selector, error)
+	sql *sql.Selector
 }
 
 // Scan applies the selector query and scan the result into the given value.
 func (ns *NodeSelect) Scan(ctx context.Context, v interface{}) error {
-	query, err := ns.path(ctx)
-	if err != nil {
+	if err := ns.prepareQuery(ctx); err != nil {
 		return err
 	}
-	ns.sql = query
+	ns.sql = ns.NodeQuery.sqlQuery()
 	return ns.sqlScan(ctx, v)
 }
 
@@ -1003,11 +1001,6 @@ func (ns *NodeSelect) BoolX(ctx context.Context) bool {
 }
 
 func (ns *NodeSelect) sqlScan(ctx context.Context, v interface{}) error {
-	for _, f := range ns.fields {
-		if !node.ValidColumn(f) {
-			return &ValidationError{Name: f, err: fmt.Errorf("invalid field %q for selection", f)}
-		}
-	}
 	rows := &sql.Rows{}
 	query, args := ns.sqlQuery().Query()
 	if err := ns.driver.Query(ctx, query, args, rows); err != nil {

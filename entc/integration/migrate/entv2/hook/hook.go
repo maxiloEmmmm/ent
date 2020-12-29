@@ -26,6 +26,32 @@ func (f CarFunc) Mutate(ctx context.Context, m entv2.Mutation) (entv2.Value, err
 	return f(ctx, mv)
 }
 
+// The ConversionFunc type is an adapter to allow the use of ordinary
+// function as Conversion mutator.
+type ConversionFunc func(context.Context, *entv2.ConversionMutation) (entv2.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f ConversionFunc) Mutate(ctx context.Context, m entv2.Mutation) (entv2.Value, error) {
+	mv, ok := m.(*entv2.ConversionMutation)
+	if !ok {
+		return nil, fmt.Errorf("unexpected mutation type %T. expect *entv2.ConversionMutation", m)
+	}
+	return f(ctx, mv)
+}
+
+// The CustomTypeFunc type is an adapter to allow the use of ordinary
+// function as CustomType mutator.
+type CustomTypeFunc func(context.Context, *entv2.CustomTypeMutation) (entv2.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f CustomTypeFunc) Mutate(ctx context.Context, m entv2.Mutation) (entv2.Value, error) {
+	mv, ok := m.(*entv2.CustomTypeMutation)
+	if !ok {
+		return nil, fmt.Errorf("unexpected mutation type %T. expect *entv2.CustomTypeMutation", m)
+	}
+	return f(ctx, mv)
+}
+
 // The GroupFunc type is an adapter to allow the use of ordinary
 // function as Group mutator.
 type GroupFunc func(context.Context, *entv2.GroupMutation) (entv2.Value, error)
@@ -201,6 +227,15 @@ func Unless(hk entv2.Hook, op entv2.Op) entv2.Hook {
 	return If(hk, Not(HasOp(op)))
 }
 
+// FixedError is a hook returning a fixed error.
+func FixedError(err error) entv2.Hook {
+	return func(entv2.Mutator) entv2.Mutator {
+		return entv2.MutateFunc(func(context.Context, entv2.Mutation) (entv2.Value, error) {
+			return nil, err
+		})
+	}
+}
+
 // Reject returns a hook that rejects all operations that match op.
 //
 //	func (T) Hooks() []entv2.Hook {
@@ -210,11 +245,7 @@ func Unless(hk entv2.Hook, op entv2.Op) entv2.Hook {
 //	}
 //
 func Reject(op entv2.Op) entv2.Hook {
-	hk := func(entv2.Mutator) entv2.Mutator {
-		return entv2.MutateFunc(func(_ context.Context, m entv2.Mutation) (entv2.Value, error) {
-			return nil, fmt.Errorf("%s operation is not allowed", m.Op())
-		})
-	}
+	hk := FixedError(fmt.Errorf("%s operation is not allowed", op))
 	return On(hk, op)
 }
 

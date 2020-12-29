@@ -3,7 +3,7 @@ id: crud
 title: CRUD API
 ---
 
-As mentioned in the [introduction](code-gen.md) section, running `entc` on the schemas,
+As mentioned in the [introduction](code-gen.md) section, running `ent` on the schemas,
 will generate the following assets:
 
 - `Client` and `Tx` objects used for interacting with the graph.
@@ -270,9 +270,9 @@ err := client.User.
 Delete using predicates.
 
 ```go
-err := client.File.
+_, err := client.File.
 	Delete().
-	Where(file.UpdatedAtLT(date))
+	Where(file.UpdatedAtLT(date)).
 	Exec(ctx)
 ```
 

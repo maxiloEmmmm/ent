@@ -56,8 +56,38 @@ func TestMySQL(t *testing.T) {
 	}
 }
 
+func TestMaria(t *testing.T) {
+	for version, port := range map[string]int{"105": 4306, "102": 4307} {
+		t.Run(version, func(t *testing.T) {
+			db, err := sql.Open("mysql", fmt.Sprintf("root:pass@tcp(localhost:%d)/", port))
+			require.NoError(t, err)
+			defer db.Close()
+			ctx := context.Background()
+			err = db.Exec(ctx, "CREATE DATABASE IF NOT EXISTS json", []interface{}{}, nil)
+			require.NoError(t, err, "creating database")
+			defer db.Exec(ctx, "DROP DATABASE IF EXISTS json", []interface{}{}, nil)
+			client, err := ent.Open("mysql", fmt.Sprintf("root:pass@tcp(localhost:%d)/json", port))
+			require.NoError(t, err, "connecting to json database")
+			err = client.Schema.Create(context.Background(), migrate.WithGlobalUniqueID(true))
+			require.NoError(t, err)
+			// We run the migration twice to check that migration handles
+			// the JSON columns, since MariaDB stores them as longtext.
+			err = client.Schema.Create(context.Background(), migrate.WithGlobalUniqueID(true))
+			require.NoError(t, err)
+
+			URL(t, client)
+			Dirs(t, client)
+			Ints(t, client)
+			Floats(t, client)
+			Strings(t, client)
+			RawMessage(t, client)
+			Predicates(t, client)
+		})
+	}
+}
+
 func TestPostgres(t *testing.T) {
-	for version, port := range map[string]int{"10": 5430, "11": 5431, "12": 5433} {
+	for version, port := range map[string]int{"10": 5430, "11": 5431, "12": 5433, "13": 5434} {
 		t.Run(version, func(t *testing.T) {
 			dsn := fmt.Sprintf("host=localhost port=%d user=postgres password=pass sslmode=disable", port)
 			db, err := sql.Open(dialect.Postgres, dsn)
@@ -243,8 +273,8 @@ func Predicates(t *testing.T, client *ent.Client) {
 	client.User.Delete().ExecX(ctx)
 	users, err = client.User.CreateBulk(
 		client.User.Create().SetInts([]int{1}),
-		client.User.Create().SetInts([]int{1, 2}),
-		client.User.Create().SetInts([]int{1, 2, 3}),
+		client.User.Create().SetInts([]int{1, 2}).SetT(&schema.T{Li: []int{1, 2}, Ls: []string{"a"}}),
+		client.User.Create().SetInts([]int{1, 2, 3}).SetT(&schema.T{Li: []int{3, 4}, Ls: []string{"b"}}),
 	).Save(ctx)
 	require.NoError(t, err)
 
@@ -254,4 +284,18 @@ func Predicates(t *testing.T, client *ent.Client) {
 		}).OnlyX(ctx)
 		require.Equal(t, u.Ints, r.Ints)
 	}
+
+	r := client.User.Query().Where(func(s *sql.Selector) {
+		s.Where(sqljson.ValueContains(user.FieldInts, 3))
+	}).OnlyX(ctx)
+	require.Contains(t, r.Ints, 3)
+	r = client.User.Query().Where(func(s *sql.Selector) {
+		s.Where(sqljson.ValueContains(user.FieldT, 3, sqljson.Path("li")))
+	}).OnlyX(ctx)
+	require.Contains(t, r.T.Li, 3)
+
+	r = client.User.Query().Where(func(s *sql.Selector) {
+		s.Where(sqljson.ValueContains(user.FieldT, "a", sqljson.Path("ls")))
+	}).OnlyX(ctx)
+	require.Contains(t, r.T.Ls, "a")
 }

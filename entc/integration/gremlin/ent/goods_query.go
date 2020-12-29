@@ -26,7 +26,7 @@ type GoodsQuery struct {
 	limit      *int
 	offset     *int
 	order      []OrderFunc
-	unique     []string
+	fields     []string
 	predicates []predicate.Goods
 	// intermediate query (i.e. traversal path).
 	gremlin *dsl.Traversal
@@ -223,12 +223,14 @@ func (gq *GoodsQuery) ExistX(ctx context.Context) bool {
 // Clone returns a duplicate of the query builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
 func (gq *GoodsQuery) Clone() *GoodsQuery {
+	if gq == nil {
+		return nil
+	}
 	return &GoodsQuery{
 		config:     gq.config,
 		limit:      gq.limit,
 		offset:     gq.offset,
 		order:      append([]OrderFunc{}, gq.order...),
-		unique:     append([]string{}, gq.unique...),
 		predicates: append([]predicate.Goods{}, gq.predicates...),
 		// clone intermediate query.
 		gremlin: gq.gremlin.Clone(),
@@ -252,15 +254,8 @@ func (gq *GoodsQuery) GroupBy(field string, fields ...string) *GoodsGroupBy {
 
 // Select one or more fields from the given query.
 func (gq *GoodsQuery) Select(field string, fields ...string) *GoodsSelect {
-	selector := &GoodsSelect{config: gq.config}
-	selector.fields = append([]string{field}, fields...)
-	selector.path = func(ctx context.Context) (prev *dsl.Traversal, err error) {
-		if err := gq.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		return gq.gremlinQuery(), nil
-	}
-	return selector
+	gq.fields = append([]string{field}, fields...)
+	return &GoodsSelect{GoodsQuery: gq}
 }
 
 func (gq *GoodsQuery) prepareQuery(ctx context.Context) error {
@@ -276,7 +271,17 @@ func (gq *GoodsQuery) prepareQuery(ctx context.Context) error {
 
 func (gq *GoodsQuery) gremlinAll(ctx context.Context) ([]*Goods, error) {
 	res := &gremlin.Response{}
-	query, bindings := gq.gremlinQuery().ValueMap(true).Query()
+	traversal := gq.gremlinQuery()
+	if len(gq.fields) > 0 {
+		fields := make([]interface{}, len(gq.fields))
+		for i, f := range gq.fields {
+			fields[i] = f
+		}
+		traversal.ValueMap(fields...)
+	} else {
+		traversal.ValueMap(true)
+	}
+	query, bindings := traversal.Query()
 	if err := gq.driver.Exec(ctx, query, bindings, res); err != nil {
 		return nil, err
 	}
@@ -328,9 +333,7 @@ func (gq *GoodsQuery) gremlinQuery() *dsl.Traversal {
 	case limit != nil:
 		v.Limit(*limit)
 	}
-	if unique := gq.unique; len(unique) == 0 {
-		v.Dedup()
-	}
+	v.Dedup()
 	return v
 }
 
@@ -594,20 +597,17 @@ func (ggb *GoodsGroupBy) gremlinQuery() *dsl.Traversal {
 
 // GoodsSelect is the builder for select fields of Goods entities.
 type GoodsSelect struct {
-	config
-	fields []string
+	*GoodsQuery
 	// intermediate query (i.e. traversal path).
 	gremlin *dsl.Traversal
-	path    func(context.Context) (*dsl.Traversal, error)
 }
 
 // Scan applies the selector query and scan the result into the given value.
 func (gs *GoodsSelect) Scan(ctx context.Context, v interface{}) error {
-	query, err := gs.path(ctx)
-	if err != nil {
+	if err := gs.prepareQuery(ctx); err != nil {
 		return err
 	}
-	gs.gremlin = query
+	gs.gremlin = gs.GoodsQuery.gremlinQuery()
 	return gs.gremlinScan(ctx, v)
 }
 

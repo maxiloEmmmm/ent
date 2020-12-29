@@ -26,7 +26,7 @@ type NodeQuery struct {
 	limit      *int
 	offset     *int
 	order      []OrderFunc
-	unique     []string
+	fields     []string
 	predicates []predicate.Node
 	// eager-loading edges.
 	withPrev *NodeQuery
@@ -254,13 +254,17 @@ func (nq *NodeQuery) ExistX(ctx context.Context) bool {
 // Clone returns a duplicate of the query builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
 func (nq *NodeQuery) Clone() *NodeQuery {
+	if nq == nil {
+		return nil
+	}
 	return &NodeQuery{
 		config:     nq.config,
 		limit:      nq.limit,
 		offset:     nq.offset,
 		order:      append([]OrderFunc{}, nq.order...),
-		unique:     append([]string{}, nq.unique...),
 		predicates: append([]predicate.Node{}, nq.predicates...),
+		withPrev:   nq.withPrev.Clone(),
+		withNext:   nq.withNext.Clone(),
 		// clone intermediate query.
 		gremlin: nq.gremlin.Clone(),
 		path:    nq.path,
@@ -329,15 +333,8 @@ func (nq *NodeQuery) GroupBy(field string, fields ...string) *NodeGroupBy {
 //		Scan(ctx, &v)
 //
 func (nq *NodeQuery) Select(field string, fields ...string) *NodeSelect {
-	selector := &NodeSelect{config: nq.config}
-	selector.fields = append([]string{field}, fields...)
-	selector.path = func(ctx context.Context) (prev *dsl.Traversal, err error) {
-		if err := nq.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		return nq.gremlinQuery(), nil
-	}
-	return selector
+	nq.fields = append([]string{field}, fields...)
+	return &NodeSelect{NodeQuery: nq}
 }
 
 func (nq *NodeQuery) prepareQuery(ctx context.Context) error {
@@ -353,7 +350,17 @@ func (nq *NodeQuery) prepareQuery(ctx context.Context) error {
 
 func (nq *NodeQuery) gremlinAll(ctx context.Context) ([]*Node, error) {
 	res := &gremlin.Response{}
-	query, bindings := nq.gremlinQuery().ValueMap(true).Query()
+	traversal := nq.gremlinQuery()
+	if len(nq.fields) > 0 {
+		fields := make([]interface{}, len(nq.fields))
+		for i, f := range nq.fields {
+			fields[i] = f
+		}
+		traversal.ValueMap(fields...)
+	} else {
+		traversal.ValueMap(true)
+	}
+	query, bindings := traversal.Query()
 	if err := nq.driver.Exec(ctx, query, bindings, res); err != nil {
 		return nil, err
 	}
@@ -405,9 +412,7 @@ func (nq *NodeQuery) gremlinQuery() *dsl.Traversal {
 	case limit != nil:
 		v.Limit(*limit)
 	}
-	if unique := nq.unique; len(unique) == 0 {
-		v.Dedup()
-	}
+	v.Dedup()
 	return v
 }
 
@@ -671,20 +676,17 @@ func (ngb *NodeGroupBy) gremlinQuery() *dsl.Traversal {
 
 // NodeSelect is the builder for select fields of Node entities.
 type NodeSelect struct {
-	config
-	fields []string
+	*NodeQuery
 	// intermediate query (i.e. traversal path).
 	gremlin *dsl.Traversal
-	path    func(context.Context) (*dsl.Traversal, error)
 }
 
 // Scan applies the selector query and scan the result into the given value.
 func (ns *NodeSelect) Scan(ctx context.Context, v interface{}) error {
-	query, err := ns.path(ctx)
-	if err != nil {
+	if err := ns.prepareQuery(ctx); err != nil {
 		return err
 	}
-	ns.gremlin = query
+	ns.gremlin = ns.NodeQuery.gremlinQuery()
 	return ns.gremlinScan(ctx, v)
 }
 
